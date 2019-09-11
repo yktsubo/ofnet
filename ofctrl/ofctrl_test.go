@@ -16,16 +16,14 @@ package ofctrl
 
 import (
 	"fmt"
+	log "github.com/Sirupsen/logrus"
+	"github.com/contiv/libOpenflow/openflow13"
+	"github.com/contiv/ofnet/ovsdbDriver"
 	"net"
 	"os"
 	"os/exec"
 	"strings"
 	"testing"
-	"time"
-
-	log "github.com/Sirupsen/logrus"
-	"github.com/contiv/libOpenflow/openflow13"
-	"github.com/contiv/ofnet/ovsdbDriver"
 )
 
 type OfActor struct {
@@ -143,13 +141,6 @@ func TestMain(m *testing.M) {
 		log.Fatalf("Error adding controller to ovs")
 	}
 
-	//wait for 10sec and see if switch connects
-	time.Sleep(10 * time.Second)
-	if !ofActor.isSwitchConnected {
-		log.Fatalf("ovsbr0 switch did not connect within 20sec")
-		return
-	}
-
 	log.Infof("Switch connected. Creating tables..")
 
 	// Create initial tables
@@ -164,7 +155,6 @@ func TestMain(m *testing.M) {
 		log.Fatalf("Error creating next table. Err: %v", err)
 		return
 	}
-
 	log.Infof("Openflow tables created successfully")
 
 	// run the test
@@ -679,4 +669,374 @@ func TestMatchSetUdpFields(t *testing.T) {
 		"set_field:5000->udp_dst,set_field:4000->udp_src,goto_table:1") {
 		t.Errorf("in port flow still found in OVS after deleting it.")
 	}
+}
+
+// Test Nicira extensions for match field and actions
+func TestNXExtension(t *testing.T) {
+	testNXExtensionsWithOFApplication(ofActor, ovsDriver, t)
+}
+
+func testNXExtensionsWithOFApplication(ofApp OfActor, ovsBr *ovsdbDriver.OvsDriver, t *testing.T) {
+	log.Infof("Enable monitor flows on table %d", ofApp.inputTable.TableId)
+	ofApp.Switch.EnableMonitor()
+
+	log.Info("***************** Add flows *****************")
+	// Test action: load mac to src mac
+	brName := ovsBr.OvsBridgeName
+	srcMac1, _ := net.ParseMAC("11:11:11:11:11:11")
+	srcIP1 := net.ParseIP("192.168.1.10")
+	flow1, err := ofApp.inputTable.NewFlow(FlowMatch{
+		Priority:  100,
+		Ethertype: 0x0800,
+		MacSa:     &srcMac1,
+		IpSa:      &srcIP1,
+	})
+	if err != nil {
+		t.Fatalf("Failed to generate flow: %+v", flow1)
+	}
+	newSrcMac := uint64(0x111111222222)
+	rng1 := openflow13.NewNXRange(0, 47)
+	err = flow1.LoadReg("OXM_OF_ETH_SRC", newSrcMac, rng1)
+	if err != nil {
+		t.Errorf("Failed to load data into field OXM_OF_ETH_SRC: %+v", err)
+	}
+	verifyFlowInstallAndDelete(t, flow1, ofApp.nextTable, brName, ofApp.inputTable.TableId,
+		"priority=100,ip,dl_src=11:11:11:11:11:11,nw_src=192.168.1.10",
+		"load:0x111111222222->NXM_OF_ETH_SRC[],goto_table:1")
+
+	// Test action: move src mac to dst mac
+	srcMac2, _ := net.ParseMAC("11:11:11:11:11:22")
+	flow2, err := ofApp.inputTable.NewFlow(FlowMatch{
+		Priority:  100,
+		Ethertype: 0x0800,
+		MacSa:     &srcMac2,
+		IpSa:      &srcIP1,
+	})
+	if err != nil {
+		t.Fatalf("Failed to generate flow: %+v", flow2)
+	}
+	rng2 := openflow13.NewNXRange(0, 47)
+	err = flow2.MoveRegs("NXM_OF_ETH_SRC", "NXM_OF_ETH_DST", rng2, rng2)
+	if err != nil {
+		t.Errorf("Failed to move data from NXM_OF_ETH_SRC to NXM_OF_ETH_DST: %+v", err)
+	}
+	verifyFlowInstallAndDelete(t, flow2, ofApp.nextTable, brName, ofApp.inputTable.TableId,
+		"priority=100,ip,dl_src=11:11:11:11:11:22,nw_src=192.168.1.10",
+		"move:NXM_OF_ETH_SRC[]->NXM_OF_ETH_DST[],goto_table:1")
+
+	// Test action: output in_port
+	inPort1 := uint32(3)
+	flow3, err := ofApp.inputTable.NewFlow(FlowMatch{
+		Priority:  100,
+		InputPort: inPort1,
+	})
+	if err != nil {
+		t.Fatalf("Failed to generate flow: %+v", flow3)
+	}
+	verifyFlowInstallAndDelete(t, flow3, NewOutputInPort(), brName, ofApp.inputTable.TableId,
+		"priority=100,in_port=3",
+		"IN_PORT")
+
+	//Test action: output to register
+	inPort2 := uint32(4)
+	flow4, err := ofApp.inputTable.NewFlow(FlowMatch{
+		Priority:  100,
+		InputPort: inPort2,
+	})
+	if err != nil {
+		t.Fatalf("Failed to generate flow: %+v", flow4)
+	}
+	nxRegOutput, _ := NewNXOutput("NXM_NX_REG1", 5, 10)
+	verifyFlowInstallAndDelete(t, flow4, nxRegOutput, brName, ofApp.inputTable.TableId,
+		"priority=100,in_port=4",
+		"output:NXM_NX_REG1[5..10]")
+
+	// Test action: conjunction
+	inPort3 := uint32(5)
+	flow5, err := ofApp.inputTable.NewFlow(FlowMatch{
+		Priority:  100,
+		InputPort: inPort3,
+	})
+	if err != nil {
+		t.Fatalf("Failed to generate flow: %+v", flow5)
+	}
+
+	_ = flow5.AddConjunction(uint32(100), uint8(2), uint8(5))
+	_ = flow5.AddConjunction(uint32(101), uint8(2), uint8(3))
+	// install it
+	err = flow5.Next(NewEmptyElem())
+	if err != nil {
+		t.Errorf("Error installing inport flow. Err: %v", err)
+	}
+	matchStr := "priority=100,in_port=5"
+	actionStr := "conjunction(101,2/3),conjunction(100,2/5)"
+	tableID := int(ofApp.inputTable.TableId)
+	// verify metadata action exists
+	if !ofctlDumpFlowMatch(brName, tableID, matchStr, actionStr) {
+		t.Errorf("conjunction flow match: %s, actions: %s not found in OVS", matchStr, actionStr)
+	}
+
+	_ = flow5.DelConjunction(uint32(101))
+	actionStr = "conjunction(100,2/5)"
+	// verify metadata action exists
+	if !ofctlDumpFlowMatch(brName, tableID, matchStr, actionStr) {
+		t.Errorf("conjunction flow match: %s, actions: %s not found in OVS", matchStr, actionStr)
+	}
+
+	err = flow5.DelConjunction(uint32(100))
+	if err != EmptyFlowActionError {
+		t.Errorf("Failed to find no action left in flow actions")
+	}
+
+	// delete the flow
+	err = flow5.Delete()
+	if err != nil {
+		t.Errorf("Error deleting the flow. Err: %v", err)
+	}
+
+	// Make sure they are really gone
+	if ofctlDumpFlowMatch(brName, tableID, matchStr, actionStr) {
+		t.Errorf("br: %s, target flow still found in OVS after deleting it", brName)
+	}
+
+	// Test action: set tun dst addr
+	inPort4 := uint32(6)
+	flow6, err := ofApp.inputTable.NewFlow(FlowMatch{
+		Priority:  100,
+		InputPort: inPort4,
+	})
+	if err != nil {
+		t.Fatalf("Failed to generate flow: %+v", flow6)
+	}
+	tunDstAddr := net.ParseIP("192.168.1.100")
+	err = flow6.SetIPField(tunDstAddr, "TunDst")
+	verifyFlowInstallAndDelete(t, flow6, ofApp.nextTable, brName, ofApp.inputTable.TableId,
+		"priority=100,in_port=6",
+		"set_field:192.168.1.100->tun_dst,goto_table:1")
+
+	// Test action: move eth_src->dst_dst, move arp_sha->arp_tha, move arp_spa->arp_tpa,
+	// set_field: arp_op=2, eth_src, arp_sha, arp_spa,
+	// output:IN_PORT
+	inPort5 := uint32(7)
+	flow7, err := ofApp.inputTable.NewFlow(FlowMatch{
+		Priority:  100,
+		Ethertype: 0x0806,
+		InputPort: inPort5,
+		ArpOper:   1,
+	})
+	if err != nil {
+		t.Fatalf("Failed to generate flow: %+v", flow7)
+	}
+	rng4 := openflow13.NewNXRange(0, 31)
+	sMAC, _ := net.ParseMAC("11:11:11:11:11:22")
+	sIP := net.ParseIP("192.168.1.100")
+	_ = flow7.SetARPSpa(sIP)
+	_ = flow7.SetARPSha(sMAC)
+	_ = flow7.SetMacSa(sMAC)
+	_ = flow7.SetARPOper(2)
+	_ = flow7.MoveRegs("NXM_OF_ARP_SPA", "NXM_OF_ARP_TPA", rng4, rng4)
+	_ = flow7.MoveRegs("NXM_NX_ARP_SHA", "NXM_NX_ARP_THA", rng2, rng2)
+	_ = flow7.MoveRegs("NXM_OF_ETH_SRC", "NXM_OF_ETH_DST", rng2, rng2)
+	verifyFlowInstallAndDelete(t, flow7, NewOutputInPort(), brName, ofApp.inputTable.TableId,
+		"priority=100,arp,in_port=7,arp_op=1",
+		"move:NXM_OF_ETH_SRC[]->NXM_OF_ETH_DST[],move:NXM_NX_ARP_SHA[]->NXM_NX_ARP_THA[],move:NXM_OF_ARP_SPA[]->NXM_OF_ARP_TPA[],set_field:2->arp_op,set_field:11:11:11:11:11:22->eth_src,set_field:11:11:11:11:11:22->arp_sha,set_field:192.168.1.100->arp_spa,IN_PORT")
+
+	// Test action: ct(commit, table=1, zone=0xff01,exec(load:0xf009->NXM_NX_CT_MARK[]))
+	inPort6 := uint32(8)
+	flow8, err := ofApp.inputTable.NewFlow(FlowMatch{
+		Priority:  100,
+		Ethertype: 0x0800,
+		InputPort: inPort6,
+	})
+	if err != nil {
+		t.Fatalf("Failed to generate flow: %+v", flow8)
+	}
+	ctTable := uint8(1)
+	ctZone := uint16(0xff01)
+	dstField, _ := openflow13.FindFieldHeaderByName("NXM_NX_CT_MARK", false)
+	loadData := uint64(0xf009)
+
+	ctLoadAction := openflow13.NewNXActionRegLoad(rng4.ToOfsBits(), dstField, loadData)
+	err = flow8.ConnTrack(true, false, &ctTable, &ctZone, ctLoadAction)
+	if err != nil {
+		t.Errorf("Failed to apply ct action: %+v", err)
+	}
+	verifyFlowInstallAndDelete(t, flow8, ofApp.nextTable, brName, ofApp.inputTable.TableId,
+		"priority=100,ip,in_port=8",
+		"ct(commit,table=1,zone=65281,exec(load:0xf009->NXM_NX_CT_MARK[])),goto_table:1")
+
+	// Test action: dec_ttl
+	inPort7 := uint32(9)
+	flow9, err := ofApp.inputTable.NewFlow(FlowMatch{
+		Priority:  100,
+		Ethertype: 0x0800,
+		InputPort: inPort7,
+	})
+	if err != nil {
+		t.Fatalf("Failed to generate flow: %+v", flow9)
+	}
+	err = flow9.DecTTL()
+	if err != nil {
+		t.Errorf("Failed to apply dec_ttl action: %+v", err)
+	}
+	verifyFlowInstallAndDelete(t, flow9, ofApp.nextTable, brName, ofApp.inputTable.TableId,
+		"priority=100,ip,in_port=9",
+		"dec_ttl,goto_table:1")
+
+	// Test action: ct(commit, exec(move:NXM_OF_ETH_SRC[]->NXM_NX_CT_LABEL, load:0xf009->NXM_NX_CT_MARK[]))
+	// Test match: ct_state=+new-trk
+	ctStates := openflow13.NewCTStates()
+	ctStates.SetNew()
+	ctStates.UnsetTrk()
+	flow10, err := ofApp.inputTable.NewFlow(FlowMatch{
+		Priority:  100,
+		Ethertype: 0x0800,
+		CtStates:  ctStates,
+	})
+	if err != nil {
+		t.Fatalf("Failed to generate flow: %+v", flow10)
+	}
+
+	ctMoveSrc, _ := openflow13.FindFieldHeaderByName("NXM_OF_ETH_SRC", false)
+	ctMoveDst, _ := openflow13.FindFieldHeaderByName("NXM_NX_CT_LABEL", false)
+	ctMoveAction := openflow13.NewNXActionRegMove(48, 0, 0, ctMoveSrc, ctMoveDst)
+	err = flow10.ConnTrack(true, false, nil, nil, ctMoveAction, ctLoadAction)
+	if err != nil {
+		t.Errorf("Failed to apply dec_ttl action: %+v", err)
+	}
+	verifyFlowInstallAndDelete(t, flow10, ofApp.nextTable, brName, ofApp.inputTable.TableId,
+		"priority=100,ct_state=+new-trk,ip",
+		"ct(commit,exec(move:NXM_OF_ETH_SRC[]->NXM_NX_CT_LABEL[0..47],load:0xf009->NXM_NX_CT_MARK[])),goto_table:1")
+
+	go ofApp.Switch.CheckStatus()
+	//Test match: reg1=0x12/0xffff
+	reg1 := &NXRegister{
+		ID:    1,
+		Data:  uint32(0x12),
+		Range: openflow13.NewNXRange(0, 15),
+	}
+	var regs = []*NXRegister{reg1}
+	flow11, err := ofApp.inputTable.NewFlow(FlowMatch{
+		Priority:  100,
+		Ethertype: 0x0800,
+		NxRegs:    regs,
+	})
+	err = flow11.ConnTrack(true, false, nil, nil)
+	if err != nil {
+		t.Errorf("Failed to apply dec_ttl action: %+v", err)
+	}
+	verifyFlowInstallAndDelete(t, flow11, ofApp.nextTable, brName, ofApp.inputTable.TableId,
+		"priority=100,ip,reg1=0x12/0xffff",
+		"ct(commit),goto_table:1")
+
+	//Test match: ct_mark=0x20/0x20
+	var mask = uint32(0x20)
+	flow12, err := ofApp.inputTable.NewFlow(FlowMatch{
+		Priority:   100,
+		Ethertype:  0x0800,
+		CtMark:     uint32(0x20),
+		CtMarkMask: &mask,
+	})
+	verifyFlowInstallAndDelete(t, flow12, ofApp.nextTable, brName, ofApp.inputTable.TableId,
+		"priority=100,ct_mark=0x20/0x20,ip",
+		"goto_table:1")
+
+	// Test group
+	groupId := uint32(1)
+
+	group1 := newGroup(groupId, GroupSelect, ofApp.Switch)
+
+	natAction := openflow13.NewNXActionCTNAT()
+	if err := natAction.SetSNAT(); err != nil {
+		t.Errorf("Failed to set SNAT action: %v", err)
+	} else if err := natAction.SetRandom(); err != nil {
+		t.Errorf("Failed to set random action: %v", err)
+	} else {
+		natAction.SetRangeIPv4Min(net.ParseIP("10.0.0.240"))
+	}
+	ctAction := openflow13.NewNXActionConnTrack()
+	ctAction.Commit()
+	ctAction.AddAction(natAction)
+	bkt := openflow13.NewBucket()
+	bkt.Weight = 50
+	bkt.AddAction(ctAction)
+	err = group1.Install()
+	if err != nil {
+		t.Errorf("Failed to install group entry: %v", err)
+	}
+
+	verifyGroup(t, brName, group1, "select", "bucket=weight:50,actions=ct(commit,nat(src=10.0.0.240,random))", true)
+
+	// Install flow and refer to group
+	inPort8 := uint32(10)
+	flow13, err := ofApp.inputTable.NewFlow(FlowMatch{
+		Priority:  100,
+		Ethertype: 0x0800,
+		InputPort: inPort8,
+	})
+	verifyFlowInstallAndDelete(t, flow13, group1, brName, ofApp.inputTable.TableId,
+		"priority=100,ip,in_port=10",
+		"group:1")
+	group1.Delete()
+	verifyGroup(t, brName, group1, "select", "bucket=weight:50,actions=ct(commit,nat(src=10.0.0.240,random))", false)
+}
+
+func verifyFlowInstallAndDelete(t *testing.T, flow *Flow, nextElem FgraphElem, br string, tableID uint8, matchStr string, actionStr string) {
+	// install it
+	err := flow.Next(nextElem)
+	if err != nil {
+		t.Errorf("Error installing inport flow. Err: %v", err)
+	}
+	// verify metadata action exists
+	if !ofctlDumpFlowMatch(br, int(tableID), matchStr, actionStr) {
+		t.Errorf("br: %s, target flow not found on OVS, match: %s, actions: %s", br, matchStr, actionStr)
+	}
+
+	// delete the flow
+	err = flow.Delete()
+	if err != nil {
+		t.Errorf("Error deleting the flow. Err: %v", err)
+	}
+
+	// Make sure they are really gone
+	if ofctlDumpFlowMatch(br, int(tableID), matchStr, actionStr) {
+		t.Errorf("br: %s, target flow still found on OVS after deleting it: match: %s, actions: %s", br, matchStr, actionStr)
+	}
+}
+
+func verifyGroup(t *testing.T, br string, group *Group, groupType string, buckets string, expectExists bool) {
+	// dump groups
+	groupList, err := ofctlGroupDump(br)
+	if err != nil {
+		log.Errorf("Error dumping flows: Err %v", err)
+	}
+	groupStr := fmt.Sprintf("group_id=%d,type=%s,%s", group.ID, groupType, buckets)
+	found := false
+	for _, groupEntry := range groupList {
+		log.Debugf("Looking for %s in %s", groupStr, groupEntry)
+		if strings.Contains(groupEntry, groupStr) {
+			found = true
+			break
+		}
+	}
+	if found != expectExists {
+		t.Errorf("br %s, failed to find group entry %s", br, groupStr)
+	}
+}
+
+// dump the groups and parse the Output
+func ofctlGroupDump(brName string) ([]string, error) {
+	groupDump, err := runOfctlCmd("dump-groups", brName)
+	if err != nil {
+		log.Errorf("Error running dump-groups on %s. Err: %v", brName, err)
+		return nil, err
+	}
+
+	log.Debugf("Group dump: %s", groupDump)
+	groupOutStr := string(groupDump)
+	groupDb := strings.Split(groupOutStr, "\n")[1:]
+
+	log.Debugf("groupList: %+v", groupDb)
+
+	return groupDb, nil
 }
