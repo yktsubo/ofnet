@@ -16,14 +16,16 @@ package ofctrl
 
 import (
 	"fmt"
-	log "github.com/Sirupsen/logrus"
-	"github.com/contiv/libOpenflow/openflow13"
-	"github.com/contiv/ofnet/ovsdbDriver"
 	"net"
 	"os"
 	"os/exec"
 	"strings"
 	"testing"
+	"time"
+
+	log "github.com/Sirupsen/logrus"
+	"github.com/contiv/libOpenflow/openflow13"
+	"github.com/contiv/ofnet/ovsdbDriver"
 )
 
 type OfActor struct {
@@ -671,6 +673,69 @@ func TestMatchSetUdpFields(t *testing.T) {
 	}
 }
 
+func TestOFSwitch_DumpFlowStats(t *testing.T) {
+	ofActor2.Switch.EnableMonitor()
+	roundID := uint64(1001)
+	categoryID := uint64(1) << 16
+
+	tcpFlag := uint16(0x12)
+	flow1, err := ofActor2.inputTable.NewFlow(FlowMatch{
+		Priority:     100,
+		InputPort:    1,
+		Ethertype:    0x0800,
+		IpProto:      IP_PROTO_TCP,
+		TcpSrcPort:   8000,
+		TcpDstPort:   9000,
+		TcpFlags:     &tcpFlag,
+		TcpFlagsMask: &tcpFlag,
+	})
+	if err != nil {
+		t.Errorf("Error creating inport flow. Err: %v", err)
+	}
+	flow1.SetL4Field(4000, "TCPSrc")
+	f1 := roundID | categoryID | uint64(1)<<24
+	flow1.CookieID = f1
+	err = flow1.Next(ofActor.nextTable)
+
+	flow2, err := ofActor2.inputTable.NewFlow(FlowMatch{
+		Priority:   100,
+		InputPort:  1,
+		Ethertype:  0x0800,
+		IpProto:    IP_PROTO_UDP,
+		UdpSrcPort: 8000,
+		UdpDstPort: 9000,
+	})
+	if err != nil {
+		t.Errorf("Error creating inport flow. Err: %v", err)
+	} // Set TCP src/dst
+	flow2.SetL4Field(4000, "UDPSrc")
+	flow2.SetL4Field(5000, "UDPDst")
+	f2 := roundID | categoryID | uint64(2)<<24
+	flow2.CookieID = f2
+
+	// install it
+	err = flow2.Next(ofActor.nextTable)
+	if err != nil {
+		t.Errorf("Error installing inport flow. Err: %v", err)
+	}
+
+	cookieID := roundID | categoryID
+	cookieMask := uint64(0xffffff)
+	stats := ofActor2.Switch.DumpFlowStats(cookieID, cookieMask, nil, nil)
+	if stats == nil {
+		t.Fatalf("Failed to dump flows")
+	}
+	if len(stats) != 2 {
+		t.Errorf("Flow count in dump result is incorrect, expecte: 2, actual: %d", len(stats))
+	}
+	for _, stat := range stats {
+		fid := stat.Cookie
+		if fid != f1 && fid != f2 {
+			t.Errorf("Flow in dump result has incorrect cookieID: %d", fid)
+		}
+	}
+}
+
 // Test Nicira extensions for match field and actions
 func TestNXExtension(t *testing.T) {
 	testNXExtensionsWithOFApplication(ofActor, ovsDriver, t)
@@ -775,6 +840,9 @@ func testNXExtensionsWithOFApplication(ofApp OfActor, ovsBr *ovsdbDriver.OvsDriv
 	if !ofctlDumpFlowMatch(brName, tableID, matchStr, actionStr) {
 		t.Errorf("conjunction flow match: %s, actions: %s not found in OVS", matchStr, actionStr)
 	}
+	flow5.MonitorRealizeStatus()
+	time.Sleep(1 * time.Second)
+	log.Info("Flow realize status is ", flow5.IsRealized())
 
 	_ = flow5.DelConjunction(uint32(101))
 	actionStr = "conjunction(100,2/5)"
@@ -908,7 +976,6 @@ func testNXExtensionsWithOFApplication(ofApp OfActor, ovsBr *ovsdbDriver.OvsDriv
 		"priority=100,ct_state=+new-trk,ip",
 		"ct(commit,exec(move:NXM_OF_ETH_SRC[]->NXM_NX_CT_LABEL[0..47],load:0xf009->NXM_NX_CT_MARK[])),goto_table:1")
 
-	go ofApp.Switch.CheckStatus()
 	//Test match: reg1=0x12/0xffff
 	reg1 := &NXRegister{
 		ID:    1,
@@ -960,6 +1027,7 @@ func testNXExtensionsWithOFApplication(ofApp OfActor, ovsBr *ovsdbDriver.OvsDriv
 	bkt := openflow13.NewBucket()
 	bkt.Weight = 50
 	bkt.AddAction(ctAction)
+	group1.AddBuckets(bkt)
 	err = group1.Install()
 	if err != nil {
 		t.Errorf("Failed to install group entry: %v", err)
@@ -987,9 +1055,13 @@ func verifyFlowInstallAndDelete(t *testing.T, flow *Flow, nextElem FgraphElem, b
 	if err != nil {
 		t.Errorf("Error installing inport flow. Err: %v", err)
 	}
+	flow.MonitorRealizeStatus()
 	// verify metadata action exists
 	if !ofctlDumpFlowMatch(br, int(tableID), matchStr, actionStr) {
 		t.Errorf("br: %s, target flow not found on OVS, match: %s, actions: %s", br, matchStr, actionStr)
+	}
+	if !flow.IsRealized() {
+		t.Errorf("Failed to realize flow status, match: %s, actions: %s", matchStr, actionStr)
 	}
 
 	// delete the flow

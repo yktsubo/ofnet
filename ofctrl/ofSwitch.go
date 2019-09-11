@@ -15,6 +15,7 @@ limitations under the License.
 package ofctrl
 
 import (
+	"fmt"
 	"net"
 	"sync"
 	"time"
@@ -32,23 +33,29 @@ type OFSwitch struct {
 	dpid   net.HardwareAddr
 	app    AppInterface
 	// Following are fgraph state for the switch
-	tableDb      map[uint8]*Table
-	dropAction   *Output
-	sendToCtrler *Output
-	normalLookup *Output
-	portMux      sync.Mutex
-	outputPorts  map[uint32]*Output
+	tableDb        map[uint8]*Table
+	dropAction     *Output
+	sendToCtrler   *Output
+	normalLookup   *Output
+	portMux        sync.Mutex
+	statusMux      sync.Mutex
+	outputPorts    map[uint32]*Output
+	groupDb        map[uint32]*Group
+	mQueue         chan *openflow13.MultipartRequest
+	monitorEnabled bool
 }
 
 var switchDb cmap.ConcurrentMap
+var monitoredFlows cmap.ConcurrentMap
 
 func init() {
 	switchDb = cmap.New()
+	monitoredFlows = cmap.New()
 }
 
 // Builds and populates a Switch struct then starts listening
 // for OpenFlow messages on conn.
-func NewSwitch(stream *util.MessageStream, dpid net.HardwareAddr, app AppInterface) *OFSwitch {
+func NewSwitch(stream *util.MessageStream, dpid net.HardwareAddr, app AppInterface, retryChan chan bool) *OFSwitch {
 	var s *OFSwitch
 
 	if getSwitch(dpid) == nil {
@@ -216,8 +223,84 @@ func (self *OFSwitch) handleMessages(dpid net.HardwareAddr, msg util.Message) {
 
 	case *openflow13.MultipartReply:
 		log.Debugf("Received MultipartReply")
+		rep := (*openflow13.MultipartReply)(t)
+		if self.monitorEnabled {
+			key := fmt.Sprintf("%d", rep.Xid)
+			ch, found := monitoredFlows.Get(key)
+			if found {
+				replyChan := ch.(chan *openflow13.MultipartReply)
+				replyChan <- rep
+			}
+		}
 		// send packet rcvd callback
-		self.app.MultipartReply(self, (*openflow13.MultipartReply)(t))
-
+		self.app.MultipartReply(self, rep)
 	}
+}
+
+func (self *OFSwitch) getMPReq() *openflow13.MultipartRequest {
+	mp := &openflow13.MultipartRequest{}
+	mp.Type = openflow13.MultipartType_Flow
+	mp.Header = openflow13.NewOfp13Header()
+	mp.Header.Type = openflow13.Type_MultiPartRequest
+	return mp
+}
+
+func (self *OFSwitch) EnableMonitor() {
+	if self.monitorEnabled {
+		return
+	}
+
+	if self.mQueue == nil {
+		self.mQueue = make(chan *openflow13.MultipartRequest)
+	}
+
+	go func() {
+		for {
+			mp := <-self.mQueue
+			self.Send(mp)
+			log.Debugf("Send flow stats request")
+		}
+	}()
+	self.monitorEnabled = true
+}
+
+func (self *OFSwitch) DumpFlowStats(cookieID, cookieMask uint64, flowMatch *FlowMatch, tableID *uint8) []*openflow13.FlowStats {
+	start := time.Now()
+	mp := self.getMPReq()
+	replyChan := make(chan *openflow13.MultipartReply)
+	go func() {
+		log.Debug("Add flow into monitor queue")
+		flowMonitorReq := openflow13.NewFlowStatsRequest()
+		if tableID != nil {
+			flowMonitorReq.TableId = *tableID
+		} else {
+			flowMonitorReq.TableId = 0xff
+		}
+		flowMonitorReq.Cookie = cookieID
+		if cookieMask > 0 {
+			flowMonitorReq.CookieMask = cookieMask
+		} else {
+			flowMonitorReq.CookieMask = uint64(0xffffffffffffffff)
+		}
+		if flowMatch != nil {
+			f := &Flow{Match: *flowMatch}
+			flowMonitorReq.Match = f.xlateMatch()
+		}
+		mp.Body = flowMonitorReq
+		monitoredFlows.Set(fmt.Sprintf("%d", mp.Xid), replyChan)
+		self.mQueue <- mp
+	}()
+
+	reply := <-replyChan
+	flowStates := make([]*openflow13.FlowStats, 0)
+	delta := time.Now().Sub(start).Nanoseconds()
+	log.Infof("time diff: %d", (delta / 1000))
+	if reply.Type == openflow13.MultipartType_Flow {
+		flowArr := reply.Body
+		for _, entry := range flowArr {
+			flowStates = append(flowStates, entry.(*openflow13.FlowStats))
+		}
+		return flowStates
+	}
+	return nil
 }

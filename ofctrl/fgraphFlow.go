@@ -123,8 +123,11 @@ type Flow struct {
 	NextElem    FgraphElem    // Next fw graph element
 	isInstalled bool          // Is the flow installed in the switch
 	CookieID    uint64        // Cookie ID for flowMod message
+	CookieMask  uint64        // Cookie Mask for flowMod message
 	flowActions []*FlowAction // List of flow actions
 	lock        sync.RWMutex  // lock for modifying flow state
+	statusLock  sync.RWMutex  // lock for modifying flow realized status
+	realized    bool          // Realized status of flow
 }
 
 // Matches data either exactly or with optional mask in register number ID. The mask
@@ -811,6 +814,9 @@ func (self *Flow) install() error {
 		globalFlowID += 1
 	}
 	flowMod.Cookie = self.CookieID
+	if self.CookieID > 0 {
+		flowMod.CookieMask = self.CookieMask
+	}
 
 	// Add or modify
 	if !self.isInstalled {
@@ -1453,7 +1459,11 @@ func (self *Flow) Delete() error {
 		flowMod.TableId = self.Table.TableId
 		flowMod.Priority = self.Match.Priority
 		flowMod.Cookie = self.CookieID
-		flowMod.CookieMask = 0xffffffffffffffff
+		if self.CookieMask > 0 {
+			flowMod.CookieMask = self.CookieMask
+		} else {
+			flowMod.CookieMask = 0xffffffffffffffff
+		}
 		flowMod.OutPort = openflow13.P_ANY
 		flowMod.OutGroup = openflow13.OFPG_ANY
 		flowMod.Match = self.xlateMatch()
@@ -1467,4 +1477,26 @@ func (self *Flow) Delete() error {
 	// Delete it from the table
 	flowKey := self.flowKey()
 	return self.Table.DeleteFlow(flowKey)
+}
+
+func (self *Flow) SetRealized() {
+	self.statusLock.Lock()
+	defer self.statusLock.Unlock()
+	self.realized = true
+}
+
+// IsRealized gets flow realized status
+func (self *Flow) IsRealized() bool {
+	self.statusLock.Lock()
+	defer self.statusLock.Unlock()
+	return self.realized
+}
+
+// MonitorRealizeStatus sends MultipartRequest to get current flow status, it is calling if needs to check
+// flow's realized status
+func (self *Flow) MonitorRealizeStatus() {
+	stats := self.Table.Switch.DumpFlowStats(self.CookieID, self.CookieMask, &self.Match, &self.Table.TableId)
+	if stats != nil {
+		self.realized = true
+	}
 }
