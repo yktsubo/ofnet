@@ -103,6 +103,33 @@ func (self *OFSwitch) DefaultTable() *Table {
 	return self.tableDb[0]
 }
 
+// Create a new group. return an error if it already exists
+func (self *OFSwitch) NewGroup(groupId uint32, groupType GroupType) (*Group, error) {
+	// check if the table already exists
+	if self.groupDb[groupId] != nil {
+		return nil, errors.New("Group already exists")
+	}
+
+	// Create a new table
+	group := newGroup(groupId, groupType, self)
+	// Save it in the DB
+	self.groupDb[groupId] = group
+
+	return group, nil
+}
+
+// Delete a group.
+// Return an error if there are flows refer pointing at it
+func (self *OFSwitch) DeleteGroup(groupId uint32) error {
+	delete(self.groupDb, groupId)
+	return nil
+}
+
+// GetGroup Returns a group
+func (self *OFSwitch) GetGroup(groupId uint32) *Group {
+	return self.groupDb[groupId]
+}
+
 // Return a output graph element for the port
 func (self *OFSwitch) OutputPort(portNo uint32) (*Output, error) {
 	self.portMux.Lock()
