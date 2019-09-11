@@ -44,6 +44,8 @@ func (self *Output) GetFlowInstr() openflow13.Instruction {
 		outputInstr.AddAction(outputAct, false)
 	case "normal":
 		fallthrough
+	case "inPort":
+		fallthrough
 	case "port":
 		outputAct := openflow13.NewActionOutput(self.portNo)
 		outputInstr.AddAction(outputAct, false)
@@ -65,9 +67,19 @@ func (self *Output) GetOutAction() openflow13.Action {
 		return outputAct
 	case "normal":
 		fallthrough
+	case "inPort":
+		fallthrough
 	case "port":
 		return openflow13.NewActionOutput(self.portNo)
 	}
 
 	return nil
+}
+
+func NewOutputInPort() *Output {
+	return &Output{outputType: "inPort", portNo: openflow13.P_IN_PORT}
+}
+
+func NewOutputNormal() *Output {
+	return &Output{outputType: "normal", portNo: openflow13.P_NORMAL}
 }
