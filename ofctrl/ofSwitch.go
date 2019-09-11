@@ -37,10 +37,12 @@ type OFSwitch struct {
 	dropAction     *Output
 	sendToCtrler   *Output
 	normalLookup   *Output
+	ready          bool
 	portMux        sync.Mutex
 	statusMux      sync.Mutex
 	outputPorts    map[uint32]*Output
 	groupDb        map[uint32]*Group
+	retry          chan bool // Channel to notify controller reconnect switch
 	mQueue         chan *openflow13.MultipartRequest
 	monitorEnabled bool
 }
@@ -65,6 +67,7 @@ func NewSwitch(stream *util.MessageStream, dpid net.HardwareAddr, app AppInterfa
 		s.app = app
 		s.stream = stream
 		s.dpid = dpid
+		s.retry = retryChan
 
 		// Initialize the fgraph elements
 		s.initFgraph()
@@ -114,8 +117,21 @@ func (self *OFSwitch) Disconnect() {
 	self.switchDisconnected()
 }
 
+func (self *OFSwitch) changeStatus(status bool) {
+	self.statusMux.Lock()
+	defer self.statusMux.Unlock()
+	self.ready = status
+}
+
+func (self *OFSwitch) IsReady() bool {
+	self.statusMux.Lock()
+	defer self.statusMux.Unlock()
+	return self.ready
+}
+
 // Handle switch connected event
 func (self *OFSwitch) switchConnected() {
+	self.changeStatus(true)
 	self.app.SwitchConnected(self)
 
 	// Send new feature request
@@ -128,8 +144,12 @@ func (self *OFSwitch) switchConnected() {
 
 // Handle switch disconnected event
 func (self *OFSwitch) switchDisconnected() {
+	self.changeStatus(false)
 	self.app.SwitchDisconnected(self)
 	switchDb.Remove(self.DPID().String())
+	if self.retry != nil {
+		self.retry <- true
+	}
 }
 
 // Receive loop for each Switch.
@@ -181,6 +201,7 @@ func (self *OFSwitch) handleMessages(dpid net.HardwareAddr, msg util.Message) {
 				res := openflow13.NewEchoRequest()
 				self.Send(res)
 			}()
+			self.changeStatus(true)
 
 		case openflow13.Type_FeaturesRequest:
 
@@ -234,6 +255,7 @@ func (self *OFSwitch) handleMessages(dpid net.HardwareAddr, msg util.Message) {
 		}
 		// send packet rcvd callback
 		self.app.MultipartReply(self, rep)
+
 	}
 }
 
@@ -303,4 +325,29 @@ func (self *OFSwitch) DumpFlowStats(cookieID, cookieMask uint64, flowMatch *Flow
 		return flowStates
 	}
 	return nil
+}
+
+func (self *OFSwitch) CheckStatus(timeout time.Duration) bool {
+	// Send echo request
+	self.changeStatus(false)
+	ch := make(chan bool)
+	go func() {
+		res := openflow13.NewEchoRequest()
+		self.Send(res)
+		for {
+			if self.IsReady() {
+				ch <- true
+				return
+			} else {
+				time.Sleep(50 * time.Millisecond)
+			}
+		}
+	}()
+	select {
+	case status := <-ch:
+		log.Info("Connection status is ", status)
+		return status
+	case <-time.After(timeout * time.Second):
+		return false
+	}
 }

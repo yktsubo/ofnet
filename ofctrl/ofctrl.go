@@ -53,15 +53,42 @@ type AppInterface interface {
 	MultipartReply(sw *OFSwitch, rep *openflow13.MultipartReply)
 }
 
+type ConnectionMode int
+
+const (
+	ServerMode ConnectionMode = iota
+	ClientMode
+)
+
 type Controller struct {
-	app      AppInterface
-	listener *net.TCPListener
-	wg       sync.WaitGroup
+	app         AppInterface
+	listener    *net.TCPListener
+	wg          sync.WaitGroup
+	connectMode ConnectionMode
+	stopFlag    chan bool // Channel to notify controller stop UDS connections
+	disconFlag  chan bool // Channel to notify controller switch disconnected, used in ClientMode
 }
 
 // Create a new controller
 func NewController(app AppInterface) *Controller {
 	c := new(Controller)
+	c.connectMode = ServerMode
+
+	// for debug logs
+	// log.SetLevel(log.DebugLevel)
+
+	// Save the handler
+	c.app = app
+	return c
+}
+
+// Create a new controller
+func NewControllerAsOFClient(app AppInterface) *Controller {
+	c := new(Controller)
+	c.connectMode = ClientMode
+	// Construct stop flag
+	c.stopFlag = make(chan bool)
+	c.disconFlag = make(chan bool)
 
 	// for debug logs
 	// log.SetLevel(log.DebugLevel)
@@ -99,15 +126,80 @@ func (c *Controller) Listen(port string) {
 
 }
 
+// Connect to Unix Domain Socket file
+func (c *Controller) Connect(sock string) {
+	if c.stopFlag == nil {
+		// Construct stop flag for notifying controller to stop connections
+		c.stopFlag = make(chan bool)
+		// Reset connection mode as ClientMode
+		c.connectMode = ClientMode
+	}
+	if c.disconFlag == nil {
+		// Construct disconnection flag for notifying controller to retry connections
+		c.disconFlag = make(chan bool)
+	}
+
+	go func() {
+		// Setup initial connection
+		c.disconFlag <- true
+	}()
+
+	var conn net.Conn
+	var err error
+	defer func() {
+		if conn != nil {
+			conn.Close()
+		}
+	}()
+
+	for {
+		select {
+		case <-c.stopFlag:
+			log.Println("Controller is delete")
+			return
+		case disConnection := <-c.disconFlag:
+			if disConnection == false {
+				continue
+			}
+			log.Printf("%s is disconnected, connecting...", sock)
+
+			if conn != nil {
+				// Try to close existent connection
+				_ = conn.Close()
+			}
+
+			conn, err = net.Dial("unix", sock)
+			if err != nil {
+				log.Fatal(err)
+			}
+			c.wg.Add(1)
+			log.Println("Connecting to socket file ", sock)
+
+			go c.handleConnection(conn)
+		}
+	}
+
+}
+
 // Cleanup the controller
 func (c *Controller) Delete() {
-	c.listener.Close()
+	if c.connectMode == ServerMode {
+		c.listener.Close()
+	} else if c.connectMode == ClientMode {
+		// Send signal to stop connections to OF switch
+		c.stopFlag <- true
+	}
 	c.wg.Wait()
 	c.app = nil
 }
 
 // Handle TCP connection from the switch
 func (c *Controller) handleConnection(conn net.Conn) {
+	var disconnected = false
+	defer func() {
+		c.disconFlag <- disconnected
+	}()
+
 	defer c.wg.Done()
 
 	stream := util.NewMessageStream(conn, c)
@@ -152,7 +244,11 @@ func (c *Controller) handleConnection(conn net.Conn) {
 				log.Printf("Received ofp1.3 Switch feature response: %+v", *m)
 
 				// Create a new switch and handover the stream
-				NewSwitch(stream, m.DPID, c.app)
+				var reConnChan chan bool = nil
+				if c.connectMode == ClientMode {
+					reConnChan = c.disconFlag
+				}
+				NewSwitch(stream, m.DPID, c.app, reConnChan)
 
 				// Let switch instance handle all future messages..
 				return
@@ -166,12 +262,14 @@ func (c *Controller) handleConnection(conn net.Conn) {
 		case err := <-stream.Error:
 			// The connection has been shutdown.
 			log.Println(err)
+			disconnected = true
 			return
 		case <-time.After(time.Second * 3):
 			// This shouldn't happen. If it does, both the controller
 			// and switch are no longer communicating. The TCPConn is
 			// still established though.
 			log.Warnln("Connection timed out.")
+			disconnected = true
 			return
 		}
 	}

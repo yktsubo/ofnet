@@ -60,6 +60,11 @@ var ofActor OfActor
 var ctrler *Controller
 var ovsDriver *ovsdbDriver.OvsDriver
 
+// Controller/Application/ovsBr work on clientMode
+var ofActor2 OfActor
+var ctrler2 *Controller
+var ovsDriver2 *ovsdbDriver.OvsDriver
+
 // Run an ovs-ofctl command
 func runOfctlCmd(cmd, brName string) ([]byte, error) {
 	cmdStr := fmt.Sprintf("sudo /usr/bin/ovs-ofctl -O Openflow13 %s %s", cmd, brName)
@@ -132,6 +137,8 @@ func ofctlDumpFlowMatch(brName string, tableId int, matchStr, actStr string) boo
 func TestMain(m *testing.M) {
 	// Create a controller
 	ctrler = NewController(&ofActor)
+	ofActor2 = OfActor{}
+	ctrler2 = NewControllerAsOFClient(&ofActor2)
 
 	// start listening
 	go ctrler.Listen(":6733")
@@ -141,6 +148,23 @@ func TestMain(m *testing.M) {
 	err := ovsDriver.AddController("127.0.0.1", 6733)
 	if err != nil {
 		log.Fatalf("Error adding controller to ovs")
+	}
+
+	// Create ovs bridge and connect clientMode Controller to it
+	ovsDriver2 = ovsdbDriver.NewOvsDriver("ovsbr12")
+	//wait for 2sec and see if ovs br created
+	time.Sleep(2 * time.Second)
+	go ctrler2.Connect("/var/run/openvswitch/ovsbr12.mgmt")
+
+	//wait for 10sec and see if switch connects
+	time.Sleep(8 * time.Second)
+	if !ofActor.isSwitchConnected {
+		log.Fatalf("ovsbr0 switch did not connect within 20sec")
+		return
+	}
+	if !ofActor2.isSwitchConnected {
+		log.Fatalf("ovsbr12 switch did not connect within 20sec")
+		return
 	}
 
 	log.Infof("Switch connected. Creating tables..")
@@ -157,6 +181,18 @@ func TestMain(m *testing.M) {
 		log.Fatalf("Error creating next table. Err: %v", err)
 		return
 	}
+
+	ofActor2.inputTable = ofActor2.Switch.DefaultTable()
+	if ofActor2.inputTable == nil {
+		log.Fatalf("Failed to get input table")
+		return
+	}
+
+	ofActor2.nextTable, err = ofActor2.Switch.NewTable(1)
+	if err != nil {
+		log.Fatalf("Error creating next table. Err: %v", err)
+		return
+	}
 	log.Infof("Openflow tables created successfully")
 
 	// run the test
@@ -164,6 +200,11 @@ func TestMain(m *testing.M) {
 
 	// delete the bridge
 	err = ovsDriver.DeleteBridge("ovsbr11")
+	if err != nil {
+		log.Fatalf("Error deleting the bridge. Err: %v", err)
+	}
+
+	err = ovsDriver2.DeleteBridge("ovsbr12")
 	if err != nil {
 		log.Fatalf("Error deleting the bridge. Err: %v", err)
 	}
@@ -739,6 +780,7 @@ func TestOFSwitch_DumpFlowStats(t *testing.T) {
 // Test Nicira extensions for match field and actions
 func TestNXExtension(t *testing.T) {
 	testNXExtensionsWithOFApplication(ofActor, ovsDriver, t)
+	testNXExtensionsWithOFApplication(ofActor2, ovsDriver2, t)
 }
 
 func testNXExtensionsWithOFApplication(ofApp OfActor, ovsBr *ovsdbDriver.OvsDriver, t *testing.T) {
@@ -976,6 +1018,10 @@ func testNXExtensionsWithOFApplication(ofApp OfActor, ovsBr *ovsdbDriver.OvsDriv
 		"priority=100,ct_state=+new-trk,ip",
 		"ct(commit,exec(move:NXM_OF_ETH_SRC[]->NXM_NX_CT_LABEL[0..47],load:0xf009->NXM_NX_CT_MARK[])),goto_table:1")
 
+	status := ofApp.Switch.CheckStatus(1)
+	if !status {
+		t.Errorf("Failed to check Switch status.")
+	}
 	//Test match: reg1=0x12/0xffff
 	reg1 := &NXRegister{
 		ID:    1,
