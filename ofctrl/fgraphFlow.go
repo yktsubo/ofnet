@@ -921,6 +921,13 @@ func (self *Flow) install() error {
 	return nil
 }
 
+// updateInstallStatus changes isInstalled value.
+func (self *Flow) UpdateInstallStatus(installed bool) {
+	self.lock.Lock()
+	defer self.lock.Unlock()
+	self.isInstalled = installed
+}
+
 // Set Next element in the Fgraph. This determines what actions will be
 // part of the flow's instruction set
 func (self *Flow) Next(elem FgraphElem) error {
