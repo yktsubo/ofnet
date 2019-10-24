@@ -83,16 +83,14 @@ func (self *Group) Install() error {
 }
 
 func (self *Group) Delete() error {
-	groupMod := openflow13.NewGroupMod()
-	groupMod.GroupId = self.ID
-
 	if self.isInstalled {
+		groupMod := openflow13.NewGroupMod()
+		groupMod.GroupId = self.ID
 		groupMod.Command = openflow13.OFPGC_DELETE
 		self.Switch.Send(groupMod)
+		// Mark it as unInstalled
+		self.isInstalled = false
 	}
-
-	// Mark it as unInstalled
-	self.isInstalled = false
 
 	// Delete group from switch cache
 	return self.Switch.DeleteGroup(self.ID)

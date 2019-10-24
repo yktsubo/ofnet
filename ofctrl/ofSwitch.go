@@ -28,6 +28,10 @@ import (
 	cmap "github.com/streamrail/concurrent-map"
 )
 
+const (
+	ConnectionCheckXid = ^uint32(0)
+)
+
 type OFSwitch struct {
 	stream *util.MessageStream
 	dpid   net.HardwareAddr
@@ -45,6 +49,9 @@ type OFSwitch struct {
 	retry          chan bool // Channel to notify controller reconnect switch
 	mQueue         chan *openflow13.MultipartRequest
 	monitorEnabled bool
+	lastUpdate     time.Time // time at that receiving the last EchoReply
+	echoCh         chan struct{}
+	echoMux        sync.Mutex // mutex to construct echoCh
 }
 
 var switchDb cmap.ConcurrentMap
@@ -191,17 +198,22 @@ func (self *OFSwitch) handleMessages(dpid net.HardwareAddr, msg util.Message) {
 			self.Send(res)
 
 		case openflow13.Type_EchoReply:
+			if self.echoCh != nil && t.Header().Xid == ConnectionCheckXid {
+				// Notify all listeners having received reply from the switch by close the channel
+				self.closeEchoCh()
+			} else {
 
-			// FIXME: This is too fragile. Create a periodic timer
-			// Wait three seconds then send an echo_request message.
-			go func() {
-				<-time.After(time.Second * 3)
+				// FIXME: This is too fragile. Create a periodic timer
+				// Wait three seconds then send an echo_request message.
+				go func() {
+					<-time.After(time.Second * 3)
 
-				// Send echo request
-				res := openflow13.NewEchoRequest()
-				self.Send(res)
-			}()
-			self.changeStatus(true)
+					// Send echo request
+					res := openflow13.NewEchoRequest()
+					self.Send(res)
+				}()
+			}
+			self.lastUpdate = time.Now()
 
 		case openflow13.Type_FeaturesRequest:
 
@@ -328,26 +340,32 @@ func (self *OFSwitch) DumpFlowStats(cookieID, cookieMask uint64, flowMatch *Flow
 }
 
 func (self *OFSwitch) CheckStatus(timeout time.Duration) bool {
-	// Send echo request
-	self.changeStatus(false)
-	ch := make(chan bool)
-	go func() {
-		res := openflow13.NewEchoRequest()
-		self.Send(res)
-		for {
-			if self.IsReady() {
-				ch <- true
-				return
-			} else {
-				time.Sleep(50 * time.Millisecond)
-			}
-		}
-	}()
+	// Send echoRequest message to the switch.
+	res := openflow13.NewEchoRequest()
+	res.Xid = ConnectionCheckXid
+	self.Send(res)
+
 	select {
-	case status := <-ch:
-		log.Info("Connection status is ", status)
-		return status
+	case <-self.getEchoCh():
+		return true
 	case <-time.After(timeout * time.Second):
 		return false
 	}
+}
+
+func (self *OFSwitch) getEchoCh() chan struct{} {
+	self.echoMux.Lock()
+	defer self.echoMux.Unlock()
+	if self.echoCh == nil {
+		self.echoCh = make(chan struct{})
+	}
+	return self.echoCh
+}
+
+// closeEchoCh is closed only after OFSwitch received EchoReply with Xid "ConnectionCheckXid"
+func (self *OFSwitch) closeEchoCh() {
+	self.echoMux.Lock()
+	defer self.echoMux.Unlock()
+	close(self.echoCh)
+	self.echoCh = nil
 }

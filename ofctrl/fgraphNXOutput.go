@@ -5,8 +5,8 @@ import "github.com/contiv/libOpenflow/openflow13"
 // This file implements the forwarding graph API for output to NX register element
 
 type NXOutput struct {
-	field      *openflow13.MatchField // Target OXM/OXX field
-	fieldRange *openflow13.NXRange    // Field range of target register to resubmit
+	field      *openflow13.MatchField // Target OXM/NXM field
+	fieldRange *openflow13.NXRange    // Field range of target register to output
 }
 
 // Fgraph element type for the NXOutput

@@ -58,6 +58,8 @@ type ConnectionMode int
 const (
 	ServerMode ConnectionMode = iota
 	ClientMode
+
+	maxRetryForConnection = 10
 )
 
 type Controller struct {
@@ -127,7 +129,7 @@ func (c *Controller) Listen(port string) {
 }
 
 // Connect to Unix Domain Socket file
-func (c *Controller) Connect(sock string) {
+func (c *Controller) Connect(sock string) error {
 	if c.stopFlag == nil {
 		// Construct stop flag for notifying controller to stop connections
 		c.stopFlag = make(chan bool)
@@ -156,7 +158,7 @@ func (c *Controller) Connect(sock string) {
 		select {
 		case <-c.stopFlag:
 			log.Println("Controller is delete")
-			return
+			return nil
 		case disConnection := <-c.disconFlag:
 			if disConnection == false {
 				continue
@@ -168,7 +170,15 @@ func (c *Controller) Connect(sock string) {
 				_ = conn.Close()
 			}
 
-			conn, err = net.Dial("unix", sock)
+			// try to reconnect to the switch if there is error
+			for i := 0; i < maxRetryForConnection; i++ {
+				conn, err = net.Dial("unix", sock)
+				if err != nil {
+					log.Errorf("Failed to connect to %s: %v, retry after 5 second.", sock, err)
+					time.Sleep(5 * time.Second)
+					continue
+				}
+			}
 			if err != nil {
 				log.Fatal(err)
 			}
