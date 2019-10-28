@@ -83,3 +83,7 @@ func NewOutputInPort() *Output {
 func NewOutputNormal() *Output {
 	return &Output{outputType: "normal", portNo: openflow13.P_NORMAL}
 }
+
+func NewOutputPort(portNo uint32) *Output {
+	return &Output{outputType: "port", portNo: portNo}
+}

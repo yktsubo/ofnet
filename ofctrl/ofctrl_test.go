@@ -412,8 +412,8 @@ func TestSetUnsetDscp(t *testing.T) {
 	}
 
 	// Set vlan and dscp
-	inPortFlow.SetVlan(1)
 	inPortFlow.SetDscp(23)
+	inPortFlow.SetVlan(1)
 
 	// install it
 	err = inPortFlow.Next(ofActor.nextTable)
@@ -549,8 +549,8 @@ func TestMatchSetIpFields(t *testing.T) {
 	}
 
 	// Set ip src/dst
-	inPortFlow.SetIPField(net.ParseIP("20.1.1.1"), "Src")
 	inPortFlow.SetIPField(net.ParseIP("20.2.1.1"), "Dst")
+	inPortFlow.SetIPField(net.ParseIP("20.1.1.1"), "Src")
 
 	// install it
 	err = inPortFlow.Next(ofActor.nextTable)
@@ -643,8 +643,8 @@ func TestMatchSetTcpFields(t *testing.T) {
 	}
 
 	// Set TCP src/dst
-	inPortFlow.SetL4Field(4000, "TCPSrc")
 	inPortFlow.SetL4Field(5000, "TCPDst")
+	inPortFlow.SetL4Field(4000, "TCPSrc")
 
 	// install it
 	err = inPortFlow.Next(ofActor.nextTable)
@@ -686,8 +686,8 @@ func TestMatchSetUdpFields(t *testing.T) {
 	}
 
 	// Set TCP src/dst
-	inPortFlow.SetL4Field(4000, "UDPSrc")
 	inPortFlow.SetL4Field(5000, "UDPDst")
+	inPortFlow.SetL4Field(4000, "UDPSrc")
 
 	// install it
 	err = inPortFlow.Next(ofActor.nextTable)
@@ -876,7 +876,7 @@ func testNXExtensionsWithOFApplication(ofApp OfActor, ovsBr *ovsdbDriver.OvsDriv
 		t.Errorf("Error installing inport flow. Err: %v", err)
 	}
 	matchStr := "priority=100,in_port=5"
-	actionStr := "conjunction(101,2/3),conjunction(100,2/5)"
+	actionStr := "conjunction(100,2/5),conjunction(101,2/3)"
 	tableID := int(ofApp.inputTable.TableId)
 	// verify metadata action exists
 	if !ofctlDumpFlowMatch(brName, tableID, matchStr, actionStr) {
@@ -940,13 +940,13 @@ func testNXExtensionsWithOFApplication(ofApp OfActor, ovsBr *ovsdbDriver.OvsDriv
 	rng4 := openflow13.NewNXRange(0, 31)
 	sMAC, _ := net.ParseMAC("11:11:11:11:11:22")
 	sIP := net.ParseIP("192.168.1.100")
-	_ = flow7.SetARPSpa(sIP)
-	_ = flow7.SetARPSha(sMAC)
-	_ = flow7.SetMacSa(sMAC)
-	_ = flow7.SetARPOper(2)
-	_ = flow7.MoveRegs("NXM_OF_ARP_SPA", "NXM_OF_ARP_TPA", rng4, rng4)
-	_ = flow7.MoveRegs("NXM_NX_ARP_SHA", "NXM_NX_ARP_THA", rng2, rng2)
 	_ = flow7.MoveRegs("NXM_OF_ETH_SRC", "NXM_OF_ETH_DST", rng2, rng2)
+	_ = flow7.MoveRegs("NXM_NX_ARP_SHA", "NXM_NX_ARP_THA", rng2, rng2)
+	_ = flow7.MoveRegs("NXM_OF_ARP_SPA", "NXM_OF_ARP_TPA", rng4, rng4)
+	_ = flow7.SetARPOper(2)
+	_ = flow7.SetMacSa(sMAC)
+	_ = flow7.SetARPSha(sMAC)
+	_ = flow7.SetARPSpa(sIP)
 	verifyFlowInstallAndDelete(t, flow7, NewOutputInPort(), brName, ofApp.inputTable.TableId,
 		"priority=100,arp,in_port=7,arp_op=1",
 		"move:NXM_OF_ETH_SRC[]->NXM_OF_ETH_DST[],move:NXM_NX_ARP_SHA[]->NXM_NX_ARP_THA[],move:NXM_OF_ARP_SPA[]->NXM_OF_ARP_TPA[],set_field:2->arp_op,set_field:11:11:11:11:11:22->eth_src,set_field:11:11:11:11:11:22->arp_sha,set_field:192.168.1.100->arp_spa,IN_PORT")

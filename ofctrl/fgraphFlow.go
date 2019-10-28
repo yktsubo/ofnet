@@ -86,6 +86,9 @@ type FlowAction struct {
 	moveAct      NXMove           // Move data from src OXM/NXM field to dst field
 	conjunction  NXConjunction    // AddConjunction actions to be set
 	connTrack    NXConnTrack      // ct actions to be set
+	reubmit      Resubmit         // resubmit packet to a specific table and port. Resubmit could also be a NextElem.
+	// If the packet is resubmitted to multiple ports, use resubmit as a FlowAction
+	// and the NextElem should be Empty.
 }
 
 type NXLoad struct {
@@ -394,8 +397,10 @@ func (self *Flow) installFlowActions(flowMod *openflow13.FlowMod,
 		actInstr = openflow13.NewInstrApplyActions()
 	}
 
-	// Loop thru all actions
-	for _, flowAction := range self.flowActions {
+	// Loop thru all actions in reversed order, and prepend the action into instruction, so that the actions is in the
+	// order as it is added by the client.
+	for i := len(self.flowActions) - 1; i >= 0; i-- {
+		flowAction := self.flowActions[i]
 		switch flowAction.actionType {
 		case "setVlan":
 			// Push Vlan Tag action
@@ -585,7 +590,7 @@ func (self *Flow) installFlowActions(flowMod *openflow13.FlowMod,
 			setARPThaAction := openflow13.NewActionSetField(*arpThaField)
 
 			// Add set ARP_THA action to the instruction
-			err = actInstr.AddAction(setARPThaAction, false)
+			err = actInstr.AddAction(setARPThaAction, true)
 			if err != nil {
 				return err
 			}
@@ -785,6 +790,16 @@ func (self *Flow) installFlowActions(flowMod *openflow13.FlowMod,
 			addActn = true
 
 			log.Debugf("flow action: Added decTTL Action: %+v", decTtlAction)
+		case "resubmit":
+			resubmitAction := flowAction.reubmit
+			// Add resubmit action to the instruction
+			err = actInstr.AddAction(resubmitAction.GetResubmitAction(), true)
+			if err != nil {
+				return err
+			}
+			addActn = true
+
+			log.Debugf("flow action: Added resubmit Action: %+v", resubmitAction)
 
 		default:
 			log.Fatalf("Unknown action type %s", flowAction.actionType)

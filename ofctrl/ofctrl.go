@@ -53,6 +53,11 @@ type AppInterface interface {
 	MultipartReply(sw *OFSwitch, rep *openflow13.MultipartReply)
 }
 
+type ConnectionRetryControl interface {
+	MaxRetry() int
+	RetryInterval() time.Duration
+}
+
 type ConnectionMode int
 
 const (
@@ -163,7 +168,7 @@ func (c *Controller) Connect(sock string) error {
 			if disConnection == false {
 				continue
 			}
-			log.Printf("%s is disconnected, connecting...", sock)
+			log.Debugf("%s is disconnected, connecting...", sock)
 
 			if conn != nil {
 				// Try to close existent connection
@@ -171,16 +176,22 @@ func (c *Controller) Connect(sock string) error {
 			}
 
 			// try to reconnect to the switch if there is error
-			for i := 0; i < maxRetryForConnection; i++ {
+			var maxRetry = maxRetryForConnection
+			var retryInterval = 1 * time.Second
+			if _, ok := c.app.(ConnectionRetryControl); ok {
+				maxRetry = c.app.(ConnectionRetryControl).MaxRetry()
+				retryInterval = c.app.(ConnectionRetryControl).RetryInterval()
+			}
+			for i := 0; i < maxRetry; i++ {
 				conn, err = net.Dial("unix", sock)
 				if err != nil {
-					log.Errorf("Failed to connect to %s: %v, retry after 5 second.", sock, err)
-					time.Sleep(5 * time.Second)
+					log.Errorf("Failed to connect to %s: %v, retry after 1 second.", sock, err)
+					time.Sleep(retryInterval)
 					continue
 				}
 			}
 			if err != nil {
-				log.Fatal(err)
+				return err
 			}
 			c.wg.Add(1)
 			log.Println("Connecting to socket file ", sock)
