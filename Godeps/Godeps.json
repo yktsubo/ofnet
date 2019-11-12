@@ -35,19 +35,19 @@
 		},
 		{
 			"ImportPath": "github.com/contiv/libOpenflow/common",
-			"Rev": "cb1835d1c11f5810c2fcf404a6d1eb907168f951"
+			"Rev": "a32467f65a1727309931f5c341ab7d867e624f3c"
 		},
 		{
 			"ImportPath": "github.com/contiv/libOpenflow/openflow13",
-			"Rev": "cb1835d1c11f5810c2fcf404a6d1eb907168f951"
+			"Rev": "a32467f65a1727309931f5c341ab7d867e624f3c"
 		},
 		{
 			"ImportPath": "github.com/contiv/libOpenflow/protocol",
-			"Rev": "cb1835d1c11f5810c2fcf404a6d1eb907168f951"
+			"Rev": "a32467f65a1727309931f5c341ab7d867e624f3c"
 		},
 		{
 			"ImportPath": "github.com/contiv/libOpenflow/util",
-			"Rev": "cb1835d1c11f5810c2fcf404a6d1eb907168f951"
+			"Rev": "a32467f65a1727309931f5c341ab7d867e624f3c"
 		},
 		{
 			"ImportPath": "github.com/contiv/libovsdb",
