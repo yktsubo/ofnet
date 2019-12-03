@@ -9,8 +9,8 @@ import (
 	"sync"
 	"sync/atomic"
 
-	"github.com/contiv/libOpenflow/openflow13"
 	"github.com/contiv/libOpenflow/util"
+	"github.com/wenyingd/libOpenflow/openflow13"
 )
 
 type TransactionType uint16

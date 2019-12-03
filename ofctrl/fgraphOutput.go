@@ -17,7 +17,7 @@ package ofctrl
 // This file implements the forwarding graph API for the output element
 
 import (
-	"github.com/contiv/libOpenflow/openflow13"
+	"github.com/wenyingd/libOpenflow/openflow13"
 )
 
 type Output struct {

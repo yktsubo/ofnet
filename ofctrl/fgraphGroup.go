@@ -1,7 +1,7 @@
 package ofctrl
 
 import (
-	"github.com/contiv/libOpenflow/openflow13"
+	"github.com/wenyingd/libOpenflow/openflow13"
 )
 
 type GroupType int

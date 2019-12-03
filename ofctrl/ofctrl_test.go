@@ -24,10 +24,10 @@ import (
 	"time"
 
 	log "github.com/Sirupsen/logrus"
-	"github.com/contiv/libOpenflow/openflow13"
 	"github.com/contiv/ofnet/ovsdbDriver"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"github.com/wenyingd/libOpenflow/openflow13"
 )
 
 type OfActor struct {

@@ -22,8 +22,8 @@ import (
 	"time"
 
 	"github.com/contiv/libOpenflow/common"
-	"github.com/contiv/libOpenflow/openflow13"
 	"github.com/contiv/libOpenflow/util"
+	"github.com/wenyingd/libOpenflow/openflow13"
 
 	log "github.com/Sirupsen/logrus"
 	cmap "github.com/streamrail/concurrent-map"

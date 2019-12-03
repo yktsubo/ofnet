@@ -24,7 +24,7 @@ import (
 	"sync"
 
 	log "github.com/Sirupsen/logrus"
-	"github.com/contiv/libOpenflow/openflow13"
+	"github.com/wenyingd/libOpenflow/openflow13"
 )
 
 // Small subset of openflow fields we currently support

@@ -1,7 +1,7 @@
 package ofctrl
 
 import (
-	"github.com/contiv/libOpenflow/openflow13"
+	"github.com/wenyingd/libOpenflow/openflow13"
 )
 
 // This file implements the forwarding graph API for empty element. It will return
