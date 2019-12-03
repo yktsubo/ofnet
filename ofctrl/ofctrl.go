@@ -67,13 +67,20 @@ const (
 	maxRetryForConnection = 10
 )
 
+// Connection operation type
+const (
+	StopConnection = iota
+	InitConnection
+	ReConnection
+	CompleteConnection
+)
+
 type Controller struct {
 	app         AppInterface
 	listener    *net.TCPListener
 	wg          sync.WaitGroup
 	connectMode ConnectionMode
-	stopFlag    chan bool // Channel to notify controller stop UDS connections
-	disconFlag  chan bool // Channel to notify controller switch disconnected, used in ClientMode
+	connCh      chan int // Channel to control the UDS connection between controller and OFSwitch
 }
 
 // Create a new controller
@@ -119,21 +126,17 @@ func (c *Controller) Listen(port string) {
 
 // Connect to Unix Domain Socket file
 func (c *Controller) Connect(sock string) error {
-	if c.stopFlag == nil {
+	if c.connCh == nil {
 		// Construct stop flag for notifying controller to stop connections
-		c.stopFlag = make(chan bool)
+		c.connCh = make(chan int)
 		// Reset connection mode as ClientMode
 		c.connectMode = ClientMode
-	}
-	if c.disconFlag == nil {
-		// Construct disconnection flag for notifying controller to retry connections
-		c.disconFlag = make(chan bool)
-	}
 
-	go func() {
 		// Setup initial connection
-		c.disconFlag <- true
-	}()
+		go func() {
+			c.connCh <- InitConnection
+		}()
+	}
 
 	var conn net.Conn
 	var err error
@@ -143,44 +146,51 @@ func (c *Controller) Connect(sock string) error {
 		}
 	}()
 
+	// Parse retry configuration.
+	var maxRetry = maxRetryForConnection
+	var retryInterval = 1 * time.Second
+	if retryController, ok := c.app.(ConnectionRetryControl); ok {
+		maxRetry = retryController.MaxRetry()
+		retryInterval = retryController.RetryInterval()
+	}
+
 	for {
 		select {
-		case <-c.stopFlag:
-			log.Println("Controller is delete")
-			return nil
-		case disConnection := <-c.disconFlag:
-			if disConnection == false {
+		case connCtrl := <-c.connCh:
+			switch connCtrl {
+			case StopConnection:
+				log.Println("Controller is delete")
+				return nil
+			case InitConnection:
+				fallthrough
+			case ReConnection:
+				log.Infof("Initialize connection or re-connect to %s.", sock)
+
+				if conn != nil {
+					// Try to close the existing connection
+					_ = conn.Close()
+				}
+
+				// Retry to connect to the switch if hit error
+				for i := 0; i < maxRetry; i++ {
+					conn, err = net.Dial("unix", sock)
+					if err != nil {
+						log.Errorf("Failed to connect to %s: %v, retry after 1 second.", sock, err)
+						time.Sleep(retryInterval)
+					} else {
+						break
+					}
+				}
+				if err != nil {
+					return err
+				}
+				c.wg.Add(1)
+				log.Printf("Connected to socket %s", sock)
+
+				go c.handleConnection(conn)
+			case CompleteConnection:
 				continue
 			}
-			log.Infof("%s is disconnected, connecting...", sock)
-
-			if conn != nil {
-				// Try to close existent connection
-				_ = conn.Close()
-			}
-
-			// try to reconnect to the switch if there is error
-			var maxRetry = maxRetryForConnection
-			var retryInterval = 1 * time.Second
-			if retryController, ok := c.app.(ConnectionRetryControl); ok {
-				maxRetry = retryController.MaxRetry()
-				retryInterval = retryController.RetryInterval()
-			}
-			for i := 0; i < maxRetry; i++ {
-				conn, err = net.Dial("unix", sock)
-				if err != nil {
-					log.Errorf("Failed to connect to %s: %v, retry after 1 second.", sock, err)
-					time.Sleep(retryInterval)
-					continue
-				}
-			}
-			if err != nil {
-				return err
-			}
-			c.wg.Add(1)
-			log.Println("Connecting to socket file ", sock)
-
-			go c.handleConnection(conn)
 		}
 	}
 
@@ -191,8 +201,8 @@ func (c *Controller) Delete() {
 	if c.connectMode == ServerMode {
 		c.listener.Close()
 	} else if c.connectMode == ClientMode {
-		// Send signal to stop connections to OF switch
-		c.stopFlag <- true
+		// Send signal to stop connections to the switch
+		c.connCh <- StopConnection
 	}
 	c.wg.Wait()
 	c.app = nil
@@ -200,9 +210,9 @@ func (c *Controller) Delete() {
 
 // Handle TCP connection from the switch
 func (c *Controller) handleConnection(conn net.Conn) {
-	var anormalQuit = false
+	var connFlag int = CompleteConnection
 	defer func() {
-		c.disconFlag <- anormalQuit
+		c.connCh <- connFlag
 	}()
 
 	defer c.wg.Done()
@@ -216,6 +226,7 @@ func (c *Controller) handleConnection(conn net.Conn) {
 	if err != nil {
 		return
 	}
+	log.Printf("Send hello with OF version: %d", h.Version)
 	stream.Outbound <- h
 
 	for {
@@ -249,9 +260,9 @@ func (c *Controller) handleConnection(conn net.Conn) {
 				log.Printf("Received ofp1.3 Switch feature response: %+v", *m)
 
 				// Create a new switch and handover the stream
-				var reConnChan chan bool = nil
+				var reConnChan chan int = nil
 				if c.connectMode == ClientMode {
-					reConnChan = c.disconFlag
+					reConnChan = c.connCh
 				}
 				NewSwitch(stream, m.DPID, c.app, reConnChan)
 
@@ -261,20 +272,20 @@ func (c *Controller) handleConnection(conn net.Conn) {
 			// An error message may indicate a version mismatch. We
 			// disconnect if an error occurs this early.
 			case *openflow13.ErrorMsg:
-				log.Warnf("Received ofp1.3 error msg: %+v", *m)
+				log.Warnf("Received OpenFlow error msg: %+v", *m)
 				stream.Shutdown <- true
 			}
 		case err := <-stream.Error:
 			// The connection has been shutdown.
 			log.Println(err)
-			anormalQuit = true
+			connFlag = ReConnection
 			return
 		case <-time.After(heartbeatInterval):
 			// This shouldn't happen. If it does, both the controller
 			// and switch are no longer communicating. The TCPConn is
 			// still established though.
 			log.Warnln("Connection timed out.")
-			anormalQuit = true
+			connFlag = ReConnection
 			return
 		}
 	}
@@ -286,7 +297,7 @@ func (c *Controller) Parse(b []byte) (message util.Message, err error) {
 	case openflow13.VERSION:
 		message, err = openflow13.Parse(b)
 	default:
-		log.Errorf("Received unsupported openflow version: %d", b[0])
+		log.Errorf("Received unsupported OpenFlow version: %d", b[0])
 	}
 	return
 }

@@ -16,7 +16,6 @@ package ofctrl
 
 import (
 	"fmt"
-	"github.com/stretchr/testify/assert"
 	"net"
 	"os"
 	"os/exec"
@@ -27,6 +26,8 @@ import (
 	log "github.com/Sirupsen/logrus"
 	"github.com/contiv/libOpenflow/openflow13"
 	"github.com/contiv/ofnet/ovsdbDriver"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 type OfActor struct {
@@ -57,6 +58,7 @@ func (o *OfActor) MultipartReply(sw *OFSwitch, rep *openflow13.MultipartReply) {
 
 func (o *OfActor) SwitchDisconnected(sw *OFSwitch) {
 	log.Printf("App: Switch disconnected: %v", sw.DPID())
+	o.isSwitchConnected = false
 }
 
 var ofActor OfActor
@@ -781,21 +783,143 @@ func TestOFSwitch_DumpFlowStats(t *testing.T) {
 }
 
 func TestReconnectOFSwitch(t *testing.T) {
+	app := new(OfActor)
+	ctrl := NewController(app)
+	brName := "br4reconn"
+	ovsBr := prepareContollerAndSwitch(t, app, ctrl, brName)
+	defer func() {
+		// Wait for flow entries flush
+		time.Sleep(1 * time.Second)
+		if err := ovsBr.DeleteBridge(brName); err != nil {
+			t.Errorf("Failed to delete br %s: %v", brName, err)
+		}
+		ctrl.Delete()
+	}()
 	assert.Equal(t, ofActor2.connectedCount, 1)
-	log.Info("After send flow to channel.")
 	go func() {
-		ovsDriver2.DeleteBridge("ovsbr12")
-		time.Sleep(4 * time.Second)
-		ovsDriver2 = ovsdbDriver.NewOvsDriver("ovsbr12")
+		ovsBr.DeleteBridge(brName)
+		time.Sleep(2 * time.Second)
+		ovsBr = ovsdbDriver.NewOvsDriver(brName)
 	}()
 	ch := make(chan struct{})
 	go func() {
-		time.Sleep(10 * time.Second)
+		time.Sleep(5 * time.Second)
 		ch <- struct{}{}
 	}()
 
 	<-ch
-	assert.Equal(t, ofActor2.connectedCount, 2)
+	assert.Equal(t, 2, app.connectedCount)
+}
+
+func prepareContollerAndSwitch(t *testing.T, app *OfActor, ctrl *Controller, brName string) (ovsBr *ovsdbDriver.OvsDriver) {
+	// Create ovs bridge and connect clientMode Controller to it
+	ovsBr = ovsdbDriver.NewOvsDriver(brName)
+	go ctrl.Connect(fmt.Sprintf("/var/run/openvswitch/%s.mgmt", brName))
+
+	time.Sleep(2 * time.Second)
+	setOfTables(t, app, brName)
+	return
+}
+
+func setOfTables(t *testing.T, ofApp *OfActor, brName string) {
+	if !ofApp.isSwitchConnected {
+		t.Fatalf("%s switch did not connect within 8s", brName)
+		return
+	}
+	ofApp.inputTable = ofApp.Switch.DefaultTable()
+	if ofApp.inputTable == nil {
+		t.Fatalf("Failed to get input table")
+		return
+	}
+	var err error
+	ofApp.nextTable, err = ofApp.Switch.NewTable(1)
+	if err != nil {
+		t.Fatalf("Error creating next table. Err: %v", err)
+		return
+	}
+}
+
+func TestBundles(t *testing.T) {
+	brName := ovsDriver2.OvsBridgeName
+	// Test transaction complete workflow
+	tx := ofActor2.Switch.NewTransaction(Atomic)
+	err := tx.Begin()
+	require.Nil(t, err, fmt.Sprintf("Failed to create transaction: %v", err))
+	_, found := ofActor2.Switch.txChans[tx.ID]
+	assert.True(t, found, fmt.Sprintf("Failed to add transaction with ID %d from switch queues", tx.ID))
+	flow1 := createFlow(t, "22:11:11:11:11:11", "192.168.2.11")
+	flow2 := createFlow(t, "22:11:11:11:11:12", "192.168.2.12")
+	for _, f := range []*Flow{flow1, flow2} {
+		err = tx.AddFlow(f)
+		require.Nil(t, err, fmt.Sprintf("Failed to add flowMod into transaction: %v", err))
+	}
+	count, err := tx.Complete()
+	require.Nil(t, err, fmt.Sprintf("Failed to complete transaction: %v", err))
+	assert.Equal(t, 2, count)
+	assert.True(t, tx.closed)
+	err = tx.Commit()
+	require.Nil(t, err, fmt.Sprintf("Failed to commit transaction: %v", err))
+	actionStr := "goto_table:1"
+	for _, matchStr := range []string{
+		"priority=100,ip,dl_src=22:11:11:11:11:11,nw_src=192.168.2.11",
+		"priority=100,ip,dl_src=22:11:11:11:11:12,nw_src=192.168.2.12",
+	} {
+		if !ofctlDumpFlowMatch(brName, int(ofActor2.inputTable.TableId), matchStr, actionStr) {
+			t.Errorf("ovsDriver2: %s, target flow not found on OVS, match: %s, actions: %s", brName, matchStr, actionStr)
+		}
+	}
+	_, found = ofActor2.Switch.txChans[tx.ID]
+	assert.False(t, found)
+
+	// Test transaction abort workflow
+	tx2 := ofActor2.Switch.NewTransaction(Atomic)
+	err = tx2.Begin()
+	require.Nil(t, err, fmt.Sprintf("Failed to create transaction: %v", err))
+	flow3 := createFlow(t, "22:11:11:11:11:13", "192.168.2.13")
+	err = tx2.AddFlow(flow3)
+	require.Nil(t, err, fmt.Sprintf("Failed to add flowMod into transaction: %v", err))
+	count, err = tx2.Complete()
+	require.Nil(t, err, fmt.Sprintf("Failed to complete transaction: %v", err))
+	assert.True(t, tx2.closed)
+	assert.Equal(t, 1, count)
+	err = tx2.Abort()
+	require.Nil(t, err, fmt.Sprintf("Failed to abort transaction: %v", err))
+	matchStr := "priority=100,ip,dl_src=22:11:11:11:11:13,nw_src=192.168.2.13"
+	if ofctlDumpFlowMatch(brName, int(ofActor2.inputTable.TableId), matchStr, actionStr) {
+		t.Errorf("ovsDriver2: %s, target flow not found on OVS, match: %s, actions: %s", brName, matchStr, actionStr)
+	}
+	_, found = ofActor2.Switch.txChans[tx2.ID]
+	assert.False(t, found)
+
+	// Test failure in AddMessage
+	tx3 := ofActor2.Switch.NewTransaction(Atomic)
+	err = tx3.Begin()
+	require.Nil(t, err, fmt.Sprintf("Failed to create transaction: %v", err))
+	flow4 := createFlow(t, "33:11:11:11:11:14", "192.168.3.14")
+	message, _ := tx3.createBundleAddMessage(flow4)
+	message.Xid = uint32(100001)
+	tx3.ofSwitch.Send(message)
+	count, err = tx3.Complete()
+	require.Nil(t, err, fmt.Sprintf("Failed to find addMesssage errors transaction: %v", err))
+	assert.True(t, tx3.closed)
+	assert.Equal(t, 0, count)
+}
+
+func createFlow(t *testing.T, mac, ip string) *Flow {
+	srcMac1, _ := net.ParseMAC(mac)
+	srcIP1 := net.ParseIP(ip)
+	flow1, err := ofActor2.inputTable.NewFlow(
+		FlowMatch{
+			Priority:  100,
+			Ethertype: 0x0800,
+			MacSa:     &srcMac1,
+			IpSa:      &srcIP1,
+		})
+	if err != nil {
+		t.Fatalf("Failed to create flow")
+	}
+	flow1.NextElem = ofActor2.nextTable
+	return flow1
 }
 
 // Test Nicira extensions for match field and actions
@@ -805,11 +929,11 @@ func TestNXExtension(t *testing.T) {
 }
 
 func testNXExtensionsWithOFApplication(ofApp OfActor, ovsBr *ovsdbDriver.OvsDriver, t *testing.T) {
-	log.Infof("Enable monitor flows on table %d", ofApp.inputTable.TableId)
-	ofApp.Switch.EnableMonitor()
-
 	// Test action: load mac to src mac
 	brName := ovsBr.OvsBridgeName
+	log.Infof("Enable monitor flows on table %d in bridge %s", ofApp.inputTable.TableId, brName)
+	ofApp.Switch.EnableMonitor()
+
 	srcMac1, _ := net.ParseMAC("11:11:11:11:11:11")
 	srcIP1 := net.ParseIP("192.168.1.10")
 	flow1, err := ofApp.inputTable.NewFlow(FlowMatch{
