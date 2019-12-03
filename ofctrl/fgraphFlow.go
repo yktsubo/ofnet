@@ -816,11 +816,9 @@ func (self *Flow) installFlowActions(flowMod *openflow13.FlowMod,
 	return nil
 }
 
-// Install a flow entry
-func (self *Flow) install() error {
-	var err error
+func (self *Flow) getFlowModMessage() (flowMod *openflow13.FlowMod, err error) {
 	// Create a flowmode entry
-	flowMod := openflow13.NewFlowMod()
+	flowMod = openflow13.NewFlowMod()
 	flowMod.TableId = self.Table.TableId
 	flowMod.Priority = self.Match.Priority
 	// Cookie ID could be set by client, using globalFlowID if not set
@@ -829,7 +827,7 @@ func (self *Flow) install() error {
 		globalFlowID += 1
 	}
 	flowMod.Cookie = self.CookieID
-	if self.CookieID > 0 {
+	if self.CookieMask > 0 {
 		flowMod.CookieMask = self.CookieMask
 	}
 
@@ -853,7 +851,7 @@ func (self *Flow) install() error {
 		// Check if there are any flow actions to perform
 		err = self.installFlowActions(flowMod, instr)
 		if err != nil {
-			return err
+			return
 		}
 
 		// Add the instruction to flowmod
@@ -874,7 +872,7 @@ func (self *Flow) install() error {
 			// Check if there are any flow actions to perform
 			err = self.installFlowActions(flowMod, instr)
 			if err != nil {
-				return err
+				return
 			}
 
 			flowMod.AddInstruction(instr)
@@ -896,7 +894,7 @@ func (self *Flow) install() error {
 			// Check if there are any flow actions to perform
 			err = self.installFlowActions(flowMod, instr)
 			if err != nil {
-				return err
+				return
 			}
 
 			flowMod.AddInstruction(instr)
@@ -911,7 +909,7 @@ func (self *Flow) install() error {
 			// Check if there are any flow actions to perform
 			err = self.installFlowActions(flowMod, instr)
 			if err != nil {
-				return err
+				return
 			}
 			if len(instr.(*openflow13.InstrActions).Actions) > 0 {
 				flowMod.AddInstruction(instr)
@@ -922,9 +920,18 @@ func (self *Flow) install() error {
 
 	default:
 		log.Fatalf("Unknown Fgraph element type %s", self.NextElem.Type())
-		return UnknownElementTypeError
+		err = UnknownElementTypeError
+		return
 	}
+	return
+}
 
+// Install a flow entry
+func (self *Flow) install() error {
+	flowMod, err := self.getFlowModMessage()
+	if err != nil {
+		return err
+	}
 	log.Debugf("Sending flowmod: %+v", flowMod)
 
 	// Send the message
