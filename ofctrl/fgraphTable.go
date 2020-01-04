@@ -85,7 +85,7 @@ func (self *Table) DeleteFlow(flowKey string) error {
 	self.flowDb[flowKey] = nil
 	delete(self.flowDb, flowKey)
 
-	log.Infof("Deleted flow: %s", flowKey)
+	log.Infof("Deleted flow on table %d: %s", self.TableId, flowKey)
 
 	return nil
 }

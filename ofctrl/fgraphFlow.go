@@ -840,7 +840,7 @@ func (self *Flow) getFlowModMessage() (flowMod *openflow13.FlowMod, err error) {
 
 	// convert match fields to openflow 1.3 format
 	flowMod.Match = self.xlateMatch()
-	log.Debugf("flow install: Match: %+v", flowMod.Match)
+	log.Infof("flow install: Match: %+v", flowMod.Match)
 
 	// Based on the next elem, decide what to install
 	switch self.NextElem.Type() {
@@ -932,14 +932,14 @@ func (self *Flow) install() error {
 	if err != nil {
 		return err
 	}
-	log.Debugf("Sending flowmod: %+v", flowMod)
+	log.Infof("Sending flowmod: %+v", flowMod)
 
 	// Send the message
 	self.Table.Switch.Send(flowMod)
 
 	// Mark it as installed
 	self.isInstalled = true
-	log.Infof("Install flow: %s", self.flowKey())
+	log.Infof("Install flow on table %d: %s", self.Table.TableId, self.flowKey())
 
 	return nil
 }
@@ -1491,14 +1491,10 @@ func (self *Flow) Delete() error {
 		flowMod.Cookie = self.CookieID
 		if self.CookieMask > 0 {
 			flowMod.CookieMask = self.CookieMask
-		} else {
-			flowMod.CookieMask = 0xffffffffffffffff
 		}
-		flowMod.OutPort = openflow13.P_ANY
-		flowMod.OutGroup = openflow13.OFPG_ANY
 		flowMod.Match = self.xlateMatch()
 
-		log.Debugf("Sending DELETE flowmod: %+v", flowMod)
+		log.Infof("Sending DELETE flowmod: %+v", flowMod)
 
 		// Send the message
 		self.Table.Switch.Send(flowMod)
