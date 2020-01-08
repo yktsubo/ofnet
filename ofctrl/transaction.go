@@ -80,14 +80,10 @@ func (tx *Transaction) newBundleControlMessage(msgType uint16) *openflow13.Bundl
 	return message
 }
 
-func (tx *Transaction) createBundleAddMessage(f *Flow) (*openflow13.BundleAdd, error) {
+func (tx *Transaction) createBundleAddMessage(flowMod *openflow13.FlowMod) (*openflow13.BundleAdd, error) {
 	message := openflow13.NewBundleAdd()
 	message.BundleID = tx.ID
 	message.Flags = tx.flag.getValue()
-	flowMod, err := f.getFlowModMessage()
-	if err != nil {
-		return nil, err
-	}
 	flowMod.Xid = message.Xid
 	message.Message = flowMod
 	return message, nil
@@ -125,8 +121,8 @@ func (tx *Transaction) Begin() error {
 }
 
 // AddFlow adds messages in the bundle.
-func (tx *Transaction) AddFlow(flow *Flow) error {
-	message, err := tx.createBundleAddMessage(flow)
+func (tx *Transaction) AddFlow(flowMod *openflow13.FlowMod) error {
+	message, err := tx.createBundleAddMessage(flowMod)
 	if err != nil {
 		return err
 	}

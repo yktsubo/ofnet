@@ -816,7 +816,8 @@ func (self *Flow) installFlowActions(flowMod *openflow13.FlowMod,
 	return nil
 }
 
-func (self *Flow) getFlowModMessage() (flowMod *openflow13.FlowMod, err error) {
+// GenerateFlowModMessage translates the Flow a FlowMod message according to the commandType.
+func (self *Flow) GenerateFlowModMessage(commandType int) (flowMod *openflow13.FlowMod, err error) {
 	// Create a flowmode entry
 	flowMod = openflow13.NewFlowMod()
 	flowMod.TableId = self.Table.TableId
@@ -830,105 +831,106 @@ func (self *Flow) getFlowModMessage() (flowMod *openflow13.FlowMod, err error) {
 	if self.CookieMask > 0 {
 		flowMod.CookieMask = self.CookieMask
 	}
-
-	// Add or modify
-	if !self.isInstalled {
-		flowMod.Command = openflow13.FC_ADD
-	} else {
-		flowMod.Command = openflow13.FC_MODIFY_STRICT
-	}
+	flowMod.Command = uint8(commandType)
 
 	// convert match fields to openflow 1.3 format
 	flowMod.Match = self.xlateMatch()
 	log.Debugf("flow install: Match: %+v", flowMod.Match)
+	if commandType != openflow13.FC_DELETE && commandType != openflow13.FC_DELETE_STRICT {
 
-	// Based on the next elem, decide what to install
-	switch self.NextElem.Type() {
-	case "table":
-		// Get the instruction set from the element
-		instr := self.NextElem.GetFlowInstr()
+		// Based on the next elem, decide what to install
+		switch self.NextElem.Type() {
+		case "table":
+			// Get the instruction set from the element
+			instr := self.NextElem.GetFlowInstr()
 
-		// Check if there are any flow actions to perform
-		err = self.installFlowActions(flowMod, instr)
-		if err != nil {
+			// Check if there are any flow actions to perform
+			err = self.installFlowActions(flowMod, instr)
+			if err != nil {
+				return
+			}
+
+			// Add the instruction to flowmod
+			flowMod.AddInstruction(instr)
+
+			log.Debugf("flow install: added goto table instr: %+v", instr)
+
+		case "flood":
+			fallthrough
+		case "output":
+			// Get the instruction set from the element
+			instr := self.NextElem.GetFlowInstr()
+
+			// Add the instruction to flowmod if its not nil
+			// a nil instruction means drop action
+			if instr != nil {
+
+				// Check if there are any flow actions to perform
+				err = self.installFlowActions(flowMod, instr)
+				if err != nil {
+					return
+				}
+
+				flowMod.AddInstruction(instr)
+
+				log.Debugf("flow install: added next instr: %+v", instr)
+			}
+		case "NxOutput":
+			fallthrough
+		case "group":
+			fallthrough
+		case "Resubmit":
+			// Get the instruction set from the element
+			instr := self.NextElem.GetFlowInstr()
+
+			// Add the instruction to flowmod if its not nil
+			// a nil instruction means drop action
+			if instr != nil {
+
+				// Check if there are any flow actions to perform
+				err = self.installFlowActions(flowMod, instr)
+				if err != nil {
+					return
+				}
+
+				flowMod.AddInstruction(instr)
+
+				log.Debugf("flow install: added next instr: %+v", instr)
+			}
+		case "empty":
+			// Get the instruction set from the element. This instruction is InstrActions with no actions
+			instr := self.NextElem.GetFlowInstr()
+			if instr != nil {
+
+				// Check if there are any flow actions to perform
+				err = self.installFlowActions(flowMod, instr)
+				if err != nil {
+					return
+				}
+				if len(instr.(*openflow13.InstrActions).Actions) > 0 {
+					flowMod.AddInstruction(instr)
+				}
+
+				log.Debugf("flow install: added next instr: %+v", instr)
+			}
+
+		default:
+			log.Fatalf("Unknown Fgraph element type %s", self.NextElem.Type())
+			err = UnknownElementTypeError
 			return
 		}
-
-		// Add the instruction to flowmod
-		flowMod.AddInstruction(instr)
-
-		log.Debugf("flow install: added goto table instr: %+v", instr)
-
-	case "flood":
-		fallthrough
-	case "output":
-		// Get the instruction set from the element
-		instr := self.NextElem.GetFlowInstr()
-
-		// Add the instruction to flowmod if its not nil
-		// a nil instruction means drop action
-		if instr != nil {
-
-			// Check if there are any flow actions to perform
-			err = self.installFlowActions(flowMod, instr)
-			if err != nil {
-				return
-			}
-
-			flowMod.AddInstruction(instr)
-
-			log.Debugf("flow install: added next instr: %+v", instr)
-		}
-	case "NxOutput":
-		fallthrough
-	case "group":
-		fallthrough
-	case "Resubmit":
-		// Get the instruction set from the element
-		instr := self.NextElem.GetFlowInstr()
-
-		// Add the instruction to flowmod if its not nil
-		// a nil instruction means drop action
-		if instr != nil {
-
-			// Check if there are any flow actions to perform
-			err = self.installFlowActions(flowMod, instr)
-			if err != nil {
-				return
-			}
-
-			flowMod.AddInstruction(instr)
-
-			log.Debugf("flow install: added next instr: %+v", instr)
-		}
-	case "empty":
-		// Get the instruction set from the element. This instruction is InstrActions with no actions
-		instr := self.NextElem.GetFlowInstr()
-		if instr != nil {
-
-			// Check if there are any flow actions to perform
-			err = self.installFlowActions(flowMod, instr)
-			if err != nil {
-				return
-			}
-			if len(instr.(*openflow13.InstrActions).Actions) > 0 {
-				flowMod.AddInstruction(instr)
-			}
-
-			log.Debugf("flow install: added next instr: %+v", instr)
-		}
-
-	default:
-		log.Fatalf("Unknown Fgraph element type %s", self.NextElem.Type())
-		err = UnknownElementTypeError
-		return
 	}
 	return
 }
 
 // Install a flow entry
 func (self *Flow) install() error {
-	flowMod, err := self.getFlowModMessage()
+	command := openflow13.FC_MODIFY_STRICT
+	// Add or modify
+	if !self.isInstalled {
+		command = openflow13.FC_ADD
+	}
+	flowMod, err := self.GenerateFlowModMessage(command)
 	if err != nil {
 		return err
 	}
@@ -948,6 +950,17 @@ func (self *Flow) UpdateInstallStatus(installed bool) {
 	self.lock.Lock()
 	defer self.lock.Unlock()
 	self.isInstalled = installed
+}
+
+// Send generates a FlowMod message according the operationType, and then sends it to the OFSwitch.
+func (self *Flow) Send(operationType int) error {
+	flowMod, err := self.GenerateFlowModMessage(operationType)
+	if err != nil {
+		return err
+	}
+	// Send the message
+	self.Table.Switch.Send(flowMod)
+	return nil
 }
 
 // Set Next element in the Fgraph. This determines what actions will be
