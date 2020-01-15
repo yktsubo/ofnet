@@ -395,6 +395,8 @@ func (self *OFSwitch) publishMessage(xID uint32, result MessageResult) {
 }
 
 func (self *OFSwitch) unSubscribeMessage(xID uint32) {
+	self.txLock.Lock()
+	defer self.txLock.Unlock()
 	_, found := self.txChans[xID]
 	if found {
 		delete(self.txChans, xID)
