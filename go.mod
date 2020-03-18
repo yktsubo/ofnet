@@ -25,6 +25,7 @@ require (
 	github.com/pkg/errors v0.7.1-0.20160808055540-a22138067af1 // indirect
 	github.com/pkg/sftp v0.0.0-20160721231453-a71e8f580e3b // indirect
 	github.com/satori/go.uuid v0.0.0-20151028231719-d41af8bb6a77 // indirect
+	github.com/sirupsen/logrus v1.4.2 // indirect
 	github.com/spf13/afero v0.0.0-20160718214748-cc9c21814bb9 // indirect
 	github.com/spf13/cast v0.0.0-20160730092037-e31f36ffc91a // indirect
 	github.com/spf13/jwalterweatherman v0.0.0-20160311093646-33c24e77fb80 // indirect
@@ -37,7 +38,6 @@ require (
 	golang.org/x/crypto v0.0.0-20150627220305-cc04154d65fb // indirect
 	golang.org/x/net v0.0.0-20190108225652-1e06a53dbb7e
 	golang.org/x/oauth2 v0.0.0-20200107190931-bf48bf16ab8d // indirect
-	golang.org/x/sys v0.0.0-20150925170307-342d6a85aa15 // indirect
 	google.golang.org/grpc v1.0.1-0.20160810184455-edc5ccf8cbfd
 	gopkg.in/check.v1 v1.0.0-20190902080502-41f04d3bba15 // indirect
 	gopkg.in/tomb.v2 v2.0.0-20140626144623-14b3d72120e8 // indirect
