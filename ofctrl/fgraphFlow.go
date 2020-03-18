@@ -1439,6 +1439,27 @@ func (self *Flow) AddConjunction(conjID uint32, clause uint8, nClause uint8) err
 	return nil
 }
 
+// Special action on the flow to add write_actions
+func (self *Flow) SetWriteActions(port int) error {
+
+	writeActions := openflow13.NewInstrWriteActions()
+	outputAct := openflow13.NewActionOutput(uint32(port))
+	writeActions.AddAction(outputAct, false)
+
+	self.lock.Lock()
+	defer self.lock.Unlock()
+
+	// Add to the action db
+	self.flowActions = append(self.flowActions, writeActions)
+
+	// If the flow entry was already installed, re-install it
+	if self.isInstalled {
+		return self.install()
+	}
+
+	return nil
+}
+
 func (self *Flow) DelConjunction(conjID uint32) error {
 	found := false
 
