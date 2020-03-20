@@ -72,22 +72,22 @@ type FlowMatch struct {
 
 // additional actions in flow's instruction set
 type FlowAction struct {
-	actionType   string           // Type of action "setVlan", "setMetadata"
-	vlanId       uint16           // Vlan Id in case of "setVlan"
-	macAddr      net.HardwareAddr // Mac address to set
-	ipAddr       net.IP           // IP address to be set
-	l4Port       uint16           // Transport port to be set
-	arpOper      uint16           // Arp operation type to be set
-	tunnelId     uint64           // Tunnel Id (used for setting VNI)
-	metadata     uint64           // Metadata in case of "setMetadata"
-	metadataMask uint64           // Metadata mask
-	dscp         uint8            // DSCP field
-	loadAct      NXLoad           // Load data into OXM/NXM fields, one or more actions
-	moveAct      NXMove           // Move data from src OXM/NXM field to dst field
-	conjunction  NXConjunction    // AddConjunction actions to be set
-	connTrack    NXConnTrack      // ct actions to be set
-	reubmit      Resubmit         // resubmit packet to a specific table and port. Resubmit could also be a NextElem.
-	writeActions []openflow13.Action     // Write Actions to execute actions in the end of pipeline
+	actionType   string              // Type of action "setVlan", "setMetadata"
+	vlanId       uint16              // Vlan Id in case of "setVlan"
+	macAddr      net.HardwareAddr    // Mac address to set
+	ipAddr       net.IP              // IP address to be set
+	l4Port       uint16              // Transport port to be set
+	arpOper      uint16              // Arp operation type to be set
+	tunnelId     uint64              // Tunnel Id (used for setting VNI)
+	metadata     uint64              // Metadata in case of "setMetadata"
+	metadataMask uint64              // Metadata mask
+	dscp         uint8               // DSCP field
+	loadAct      NXLoad              // Load data into OXM/NXM fields, one or more actions
+	moveAct      NXMove              // Move data from src OXM/NXM field to dst field
+	conjunction  NXConjunction       // AddConjunction actions to be set
+	connTrack    NXConnTrack         // ct actions to be set
+	reubmit      Resubmit            // resubmit packet to a specific table and port. Resubmit could also be a NextElem.
+	writeActions []openflow13.Action // Write Actions to execute actions in the end of pipeline
 	// If the packet is resubmitted to multiple ports, use resubmit as a FlowAction
 	// and the NextElem should be Empty.
 }
@@ -802,8 +802,9 @@ func (self *Flow) installFlowActions(flowMod *openflow13.FlowMod,
 
 			log.Debugf("flow action: Added resubmit Action: %+v", resubmitAction)
 
-		case "writeActions":			
+		case "writeActions":
 			actInstr = openflow13.NewInstrWriteActions()
+			actInstr.Actions = self.writeActions
 			addActn = true
 
 			//log.Debugf("flow action: Added write_actions Action: %+v", writeActions)
