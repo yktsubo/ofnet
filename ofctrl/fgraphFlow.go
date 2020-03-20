@@ -806,7 +806,7 @@ func (self *Flow) installFlowActions(flowMod *openflow13.FlowMod,
 			actInstr = openflow13.NewInstrWriteActions()
 			addActn = true
 
-			log.Debugf("flow action: Added write_actions Action: %+v", writeActions)
+			//log.Debugf("flow action: Added write_actions Action: %+v", writeActions)
 
 		default:
 			log.Fatalf("Unknown action type %s", flowAction.actionType)
