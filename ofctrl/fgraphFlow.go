@@ -87,7 +87,7 @@ type FlowAction struct {
 	conjunction  NXConjunction       // AddConjunction actions to be set
 	connTrack    NXConnTrack         // ct actions to be set
 	reubmit      Resubmit            // resubmit packet to a specific table and port. Resubmit could also be a NextElem.
-	writeActions []openflow13.Action // Write Actions to execute actions in the end of pipeline
+	writeAction  openflow13.Action   // Write Actions to execute actions in the end of pipeline
 	// If the packet is resubmitted to multiple ports, use resubmit as a FlowAction
 	// and the NextElem should be Empty.
 }
@@ -804,7 +804,7 @@ func (self *Flow) installFlowActions(flowMod *openflow13.FlowMod,
 
 		case "writeActions":
 			actInstr = openflow13.NewInstrWriteActions()
-			actInstr.Actions = self.writeActions
+			actInstr.AddAction(flowAction.writeAction,false)
 			addActn = true
 
 			//log.Debugf("flow action: Added write_actions Action: %+v", writeActions)
@@ -1454,7 +1454,7 @@ func (self *Flow) SetWriteActions(port int) error {
 
 	action := new(FlowAction)
 	action.actionType = "writeActions"
-	action.writeActions = append(action.writeActions, outputAct)
+	action.writeAction = outputAct
 	self.lock.Lock()
 	defer self.lock.Unlock()
 	// Add to the action db
