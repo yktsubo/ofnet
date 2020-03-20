@@ -803,14 +803,7 @@ func (self *Flow) installFlowActions(flowMod *openflow13.FlowMod,
 			log.Debugf("flow action: Added resubmit Action: %+v", resubmitAction)
 
 		case "writeActions":			
-			writeActions := openflow13.NewInstrWriteActions()
-			writeActions.AddAction(flowAction.writeActions, true)
-		
-			// Add write_actions action to the instruction
-			err = actInstr.AddAction(writeActions, true)
-			if err != nil {
-				return err
-			}
+			actInstr = openflow13.NewInstrWriteActions()
 			addActn = true
 
 			log.Debugf("flow action: Added write_actions Action: %+v", writeActions)
