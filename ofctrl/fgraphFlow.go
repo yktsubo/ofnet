@@ -68,6 +68,7 @@ type FlowMatch struct {
 	NxRegs        []*NXRegister        // regX or regX[m..n]
 	CtMark        uint32               // conn_track mark
 	CtMarkMask    *uint32              // Mask of conn_track mark
+	ActsetOutput  uint32               // Output port Number 
 }
 
 // additional actions in flow's instruction set
@@ -379,6 +380,13 @@ func (self *Flow) xlateMatch() openflow13.Match {
 		ctMarkField := openflow13.NewCTMarkMatchField(self.Match.CtMark, self.Match.CtMarkMask)
 		ofMatch.AddField(*ctMarkField)
 	}
+
+	// Handle actset_output match
+	if self.Match.ActsetOutput != 0 {
+		actsetOutputField := openflow13.NewActsetOutputField(self.Match.ActsetOutput)
+		ofMatch.AddField(*actsetOutputField)
+	}
+
 
 	return *ofMatch
 }
