@@ -55,7 +55,7 @@ func (self *OFSwitch) NewTransaction(flag TransactionType) *Transaction {
 func (tx *Transaction) getError(reply MessageResult) error {
 	errType := reply.GetErrorType()
 	errCode := reply.GetErrorCode()
-	if errType == openflow13.ET_EXPERIMENTER && errCode >= openflow13.BEC_UNKNOWN && errCode <= openflow13.BEC_BUNDLE_IN_PROCESS {
+	if errType == openflow13.ET_EXPERIMENTER && errCode >= openflow13.BFC_UNKNOWN && errCode <= openflow13.BFC_BUNDLE_IN_PROCESS {
 		return openflow13.ParseBundleError(reply.GetErrorCode())
 	}
 	return fmt.Errorf("unsupported bundle error with type %d and code %d", errType, errCode)
