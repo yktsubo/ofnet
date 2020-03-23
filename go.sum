@@ -44,11 +44,14 @@ github.com/stretchr/testify v1.2.2 h1:bSDNvY7ZPG5RlJ8otE/7V6gMiyenm9RtJ7IUVIAoJ1
 github.com/stretchr/testify v1.2.2/go.mod h1:a8OnRcib4nhh0OaRAV+Yts87kKdq0PP7pXfy6kDkUVs=
 github.com/stretchr/testify v1.4.0 h1:2E4SXV/wtOkTonXsotYi4li6zVWxYlZuYNCXe9XRJyk=
 github.com/stretchr/testify v1.4.0/go.mod h1:j7eGeouHqKxXV5pUuKE4zz7dFj8WfuZ+81PSLYec5m4=
+github.com/stretchr/testify v1.5.1 h1:nOGnQDM7FYENwehXlg/kFVnos3rEvtKTjRvOWSzb6H4=
 github.com/stretchr/testify v1.5.1/go.mod h1:5W2xD1RspED5o8YsWQXVCued0rvSQ+mT+I5cxcmMvtA=
 github.com/yktsubo/libOpenflow v0.0.2 h1:4J8n+9WFcZyU746a0dSR6uaxJADN3GoNszzUgmMlEgg=
 github.com/yktsubo/libOpenflow v0.0.2/go.mod h1:G4zm7lciGrfUT68FTGGgvR73b2Qlz6am49rpFSiUp+U=
 github.com/yktsubo/libOpenflow v0.0.5 h1:OMa5YgHWhsK/d+14hAZmoxACb2MpRw0O+ddTXiC1POo=
 github.com/yktsubo/libOpenflow v0.0.5/go.mod h1:GP7ZsO2PR7yLt42rmfWbkjKRW7IwBN8ne66ZYE++pjA=
+github.com/yktsubo/libOpenflow v0.0.9 h1:2UIAE7WyD63ctKrT1FnMBnogOHfv/BhdWaAXHrwM0pc=
+github.com/yktsubo/libOpenflow v0.0.9/go.mod h1:0DtaJQdKdGIl2aEUGKOyZPrbzu64LcssbOMMEhRsOW8=
 golang.org/x/sys v0.0.0-20180905080454-ebe1bf3edb33/go.mod h1:STP8DvDyc/dI5b8T5hshtkjS+E42TnysNCUPdjciGhY=
 golang.org/x/sys v0.0.0-20190422165155-953cdadca894 h1:Cz4ceDQGXuKRnVBDTS23GTn/pU5OE2C0WrNTOYK1Uuc=
 golang.org/x/sys v0.0.0-20190422165155-953cdadca894/go.mod h1:h1NjWce9XRLGQEsW7wpKNCjG9DtNlClVuFLEZdDNbEs=
