@@ -12,4 +12,4 @@ require (
 	github.com/stretchr/testify v1.5.1
 )
 
-replace github.com/contiv/libOpenflow => github.com/yktsubo/libOpenflow v0.1.2
+replace github.com/contiv/libOpenflow => github.com/yktsubo/libOpenflow v0.2.0
