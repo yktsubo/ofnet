@@ -15,4 +15,4 @@ require (
 	github.com/wenyingd/ofnet v0.0.0-20200306115935-b1f7790fe2be // indirect
 )
 
-replace github.com/contiv/libOpenflow => github.com/yktsubo/libOpenflow v0.2.0
+//replace github.com/contiv/libOpenflow => github.com/yktsubo/libOpenflow v0.2.0
