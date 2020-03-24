@@ -1,4 +1,4 @@
-module github.com/wenyingd/ofnet
+module github.com/yktsubo/ofnet
 
 go 1.13
 
@@ -16,6 +16,3 @@ require (
 	gopkg.in/check.v1 v1.0.0-20190902080502-41f04d3bba15 // indirect
 )
 
-replace (
-	github.com/contiv/ofnet => github.com/yktsubo/ofnet v0.0.0-20200324133132-1c5ec79cdfbf
-)
