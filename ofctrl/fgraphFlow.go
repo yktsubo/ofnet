@@ -385,21 +385,16 @@ func (self *Flow) xlateMatch() openflow13.Match {
 // Install all flow actions
 func (self *Flow) installFlowActions(flowMod *openflow13.FlowMod,
 	instr openflow13.Instruction) error {
-	var actInstr openflow13.Instruction
-	var addActn bool = false
-	var err error
-
-	// Create a apply_action instruction to be used if its not already created
-	switch instr.(type) {
-	case *openflow13.InstrActions:
-		actInstr = instr
-	default:
-		actInstr = openflow13.NewInstrApplyActions()
-	}
 
 	// Loop thru all actions in reversed order, and prepend the action into instruction, so that the actions is in the
 	// order as it is added by the client.
 	for i := len(self.flowActions) - 1; i >= 0; i-- {
+		var actInstr openflow13.Instruction
+		var addActn bool = false
+		var err error
+		// Create a apply_action instruction to be used if its not already created
+		actInstr = openflow13.NewInstrApplyActions()
+
 		flowAction := self.flowActions[i]
 		switch flowAction.actionType {
 		case "setVlan":
@@ -805,12 +800,11 @@ func (self *Flow) installFlowActions(flowMod *openflow13.FlowMod,
 			log.Fatalf("Unknown action type %s", flowAction.actionType)
 			return UnknownActionTypeError
 		}
-	}
-
-	// Add the instruction to flow if its not already added
-	if (addActn) && (actInstr != instr) {
-		// Add the instrction to flowmod
-		flowMod.AddInstruction(actInstr)
+		// Add the instruction to flow if its not already added
+		if (addActn) && (actInstr != instr) {
+			// Add the instrction to flowmod
+			flowMod.AddInstruction(actInstr)
+		}
 	}
 
 	return nil
