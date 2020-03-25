@@ -1,4 +1,4 @@
-module github.com/wenyingd/ofnet
+module github.com/yktsubo/ofnet
 
 go 1.13
 
