@@ -17,5 +17,6 @@ require (
 )
 
 replace (
+	github.com/contiv/libOpenflow => github.com/yktsubo/libOpenflow v0.2.0
 	github.com/contiv/ofnet => github.com/yktsubo/ofnet v0.0.0-20200324133132-1c5ec79cdfbf
 )

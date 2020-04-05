@@ -1332,6 +1332,100 @@ func TestNewFlowActionAPIs(t *testing.T) {
 	verifyGroup(t, brName, group1, "select", "bucket=weight:50,actions=ct(commit,nat(src=10.0.0.240,random))", false)
 }
 
+func TestWriteactionsAPIs(t *testing.T) {
+	ofApp := ofActor2
+
+	// Test action: load mac to src mac
+	brName := ovsDriver2.OvsBridgeName
+	log.Infof("Enable monitor flows on table %d in bridge %s", ofApp.inputTable.TableId, brName)
+	ofApp.Switch.EnableMonitor()
+
+    // Test dnatTable flow
+	ipDa1 := net.ParseIP("10.96.0.0")
+	ipAddrMask1 := net.ParseIP("255.240.0.0")
+	flow1 := &Flow{
+		Table: ofApp.inputTable,
+		Match: FlowMatch{
+			Priority:  200,
+			Ethertype: 0x0800,
+			IpDa:      &ipDa1,
+			IpDaMask:  &ipAddrMask1,
+		},
+	}
+
+	rng1 := openflow13.NewNXRange(16, 16)
+	loadReg1, err := NewNXLoadAction("NXM_NX_REG0", uint64(1), rng1)
+	require.Nil(t, err)
+	flow1.ApplyActions([]OFAction{loadReg1})
+	outputAction1 := NewOutputPort(uint32(1))
+	flow1.WriteActions([]OFAction{outputAction1})
+	flow1.Goto(ofApp.nextTable.TableId)
+	verifyNewFlowInstallAndDelete(t, flow1, brName, ofApp.inputTable.TableId,
+		"priority=200,ip,nw_dst=10.96.0.0/12",
+		"load:0x1->NXM_NX_REG0[16],write_actions(output:1),goto_table:1")
+
+	// Test l3ForwardingTable flow
+	ipDa2 := net.ParseIP("172.30.0.0")
+	ipAddrMask2 := net.ParseIP("255.255.255.0")
+	flow2 := &Flow{
+		Table: ofApp.inputTable,
+		Match: FlowMatch{
+			Priority:  200,
+			Ethertype: 0x0800,
+			IpDa:      &ipDa2,
+			IpDaMask:  &ipAddrMask2,
+		},
+	}
+	decTTLAction2 := &DecTTLAction{}
+
+	srcMac2, _ := net.ParseMAC("11:11:11:11:11:11")
+	srcMacAction2 := &SetSrcMACAction{MAC: srcMac2}
+
+	dstMac2, _ := net.ParseMAC("aa:bb:cc:dd:ee:ff")
+	dstMacAction2 := &SetDstMACAction{MAC: dstMac2}
+
+	rng2 := openflow13.NewNXRange(16, 16)
+	loadReg2, err := NewNXLoadAction("NXM_NX_REG0", uint64(1), rng2)
+
+	ipTunnelDa2 := net.ParseIP("192.168.20.1")
+	tunnelDstAction := &SetTunnelDstAction{IP: ipTunnelDa2}
+
+	flow2.ApplyActions([]OFAction{decTTLAction2, srcMacAction2, dstMacAction2, loadReg2, tunnelDstAction})
+
+	outputAction2 := NewOutputPort(uint32(1))
+	flow2.WriteActions([]OFAction{outputAction2})
+	flow2.Goto(ofApp.nextTable.TableId)
+	require.Nil(t, err)
+	verifyNewFlowInstallAndDelete(t, flow2, brName, ofApp.inputTable.TableId,
+		"priority=200,ip,nw_dst=172.30.0.0/24",
+		"dec_ttl,set_field:11:11:11:11:11:11->eth_src,set_field:aa:bb:cc:dd:ee:ff->eth_dst,load:0x1->NXM_NX_REG0[16],set_field:192.168.20.1->tun_dst,write_actions(output:1),goto_table:1")
+
+	// test l2ForwardingCalcTable flow
+	macDa3, _ := net.ParseMAC("11:11:11:11:11:11")
+
+	flow3 := &Flow{
+		Table: ofApp.inputTable,
+		Match: FlowMatch{
+			Priority:  200,
+			MacDa: &macDa3,
+		},
+	}
+
+	rng3 := openflow13.NewNXRange(16, 16)
+	loadReg3, err := NewNXLoadAction("NXM_NX_REG0", uint64(1), rng3)
+
+	flow3.ApplyActions([]OFAction{loadReg3})
+
+	outputAction3 := NewOutputPort(uint32(1))
+	flow3.WriteActions([]OFAction{outputAction3})
+	flow3.Goto(ofApp.nextTable.TableId)
+	require.Nil(t, err)
+	verifyNewFlowInstallAndDelete(t, flow3, brName, ofApp.inputTable.TableId,
+		"priority=200,dl_dst=11:11:11:11:11:11",
+		"load:0x1->NXM_NX_REG0[16],write_actions(output:1),goto_table:1")
+
+}
+
 func testNXExtensionNote(ofApp OfActor, ovsBr *OvsDriver, t *testing.T) {
 	brName := ovsBr.OvsBridgeName
 	log.Infof("Enable monitor flows on Table %d in bridge %s", ofApp.inputTable.TableId, brName)
