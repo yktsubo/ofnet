@@ -1952,6 +1952,10 @@ func (self *Flow) generateFlowMessage(commandType int) (flowMod *openflow13.Flow
 			}
 			flowMod.AddInstruction(clearInstruction)
 		}
+		if self.gotoTable != nil {
+			gotoTableInstruction := openflow13.NewInstrGotoTable(*self.gotoTable)
+			flowMod.AddInstruction(gotoTableInstruction)
+		}
 		if len(self.writeActions) > 0 {
 			writeInstruction := openflow13.NewInstrWriteActions()
 			for _, act := range self.writeActions {
@@ -1960,10 +1964,6 @@ func (self *Flow) generateFlowMessage(commandType int) (flowMod *openflow13.Flow
 				}
 			}
 			flowMod.AddInstruction(writeInstruction)
-		}
-		if self.gotoTable != nil {
-			gotoTableInstruction := openflow13.NewInstrGotoTable(*self.gotoTable)
-			flowMod.AddInstruction(gotoTableInstruction)
 		}
 	}
 	return flowMod, nil
